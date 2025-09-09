@@ -40,7 +40,7 @@ from Scraper import (
     ScrapeConfig, ScrapeResults,
     HttpClient, ContentExtractor, NewsAPIService, URLStore,
     NewsProcessingError, ScrapingError, APIError,
-    now_stamp, ensure_directory,
+    ensure_directory,
     build_arg_parser, save_scraped_data_to_json
 )
 from Scraper import NewsScraper as ScraperNewsScraper
@@ -1066,8 +1066,7 @@ class DocumentWriter:
 
 def main() -> None:
     """命令行入口函数，解析参数并运行完整流程"""
-    import Scraper
-    ap = Scraper.build_arg_parser()
+    ap = build_arg_parser()
     args = ap.parse_args()
 
     cfg = ScrapeConfig(
@@ -1221,11 +1220,8 @@ def run_with_scraper(cfg: Optional[ScrapeConfig] = None) -> None:
     print("=" * 60)
 
     try:
-        # 动态导入Scraper模块
-        import Scraper
-
         # 使用默认配置或提供的配置
-        cfg = cfg or Scraper.ScrapeConfig()
+        cfg = cfg or ScrapeConfig()
 
         print("🔍 开始使用Scraper模块进行新闻爬取...")
         print("-" * 40)
@@ -1312,11 +1308,7 @@ def main_with_scraper() -> None:
     """使用Scraper模块的命令行入口函数"""
     ap = build_scraper_arg_parser()
     args = ap.parse_args()
-
-    # 动态导入Scraper模块
-    import Scraper
-
-    cfg = Scraper.ScrapeConfig(
+    cfg = ScrapeConfig(
         output_dir=args.output_dir,
         api_url=args.api_url,
         api_token=args.api_token,
