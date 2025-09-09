@@ -56,7 +56,7 @@ from ai_processor import (
     process_articles_concurrent, process_articles_with_two_steps,
     process_articles_to_words, count_english_words, safe_filename,
     handle_error, safe_execute, now_stamp,
-    DEFAULT_MODEL_ID, DEFAULT_SILICONFLOW_URL,  # 修正常量名
+    DEFAULT_MODEL_ID, DEFAULT_SILICONFLOW_API_KEY, DEFAULT_SILICONFLOW_URL,  # 修正常量名
     DEFAULT_BATCH_SIZE, DEFAULT_MAX_TOKENS_HARD_CAP, DEFAULT_USE_TWO_STEP,
     DEFAULT_CONCURRENCY, CHINESE_VARIANT_HINT, SEPARATOR_LINE, MAIN_SEPARATOR,
     TAG_RE, PARA_TAG_RE,
@@ -1068,29 +1068,12 @@ def main() -> None:
     """命令行入口函数，解析参数并运行完整流程"""
     import Scraper
     ap = Scraper.build_arg_parser()
-    ap.add_argument("--siliconflow-api-key", default=os.getenv("SILICONFLOW_API_KEY", None))
-    ap.add_argument("--config", help="JSON配置文件，提供API密钥", default=None)
     args = ap.parse_args()
-
-    config_data = {}
-    if args.config:
-        with open(args.config, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
-
-    api_token = args.api_token or config_data.get("crawler_api_token") or os.getenv("CRAWLER_API_TOKEN")
-    silicon_key = args.siliconflow_api_key or config_data.get("siliconflow_api_key") or os.getenv("SILICONFLOW_API_KEY")
-
-    if not api_token:
-        raise ValueError("CRAWLER_API_TOKEN is required. Provide via --api-token, config file, or env variable.")
-    if not silicon_key:
-        raise ValueError("SILICONFLOW_API_KEY is required. Provide via --siliconflow-api-key, config file, or env variable.")
-
-    os.environ["SILICONFLOW_API_KEY"] = silicon_key
 
     cfg = ScrapeConfig(
         output_dir=args.output_dir,
         api_url=args.api_url,
-        api_token=api_token,
+        api_token=args.api_token,
         max_urls=max(1, args.max_urls),
         concurrency=max(1, args.concurrency),
         retry_interval_hours=max(1, args.retry_hours),
@@ -1309,8 +1292,6 @@ def build_scraper_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", default=os.getenv("CRAWLER_OUTPUT_DIR", ""))
     p.add_argument("--api-url", default=os.getenv("CRAWLER_API_URL", None))
     p.add_argument("--api-token", default=os.getenv("CRAWLER_API_TOKEN", None))
-    p.add_argument("--siliconflow-api-key", default=os.getenv("SILICONFLOW_API_KEY", None))
-    p.add_argument("--config", help="JSON配置文件，提供API密钥", default=None)
     p.add_argument("--max-urls", type=int, default=int(os.getenv("CRAWLER_MAX_URLS", "10")))
     p.add_argument("--concurrency", type=int, default=int(os.getenv("CRAWLER_CONCURRENCY", str(DEFAULT_CONCURRENCY))))
     p.add_argument("--retry-hours", type=int, default=int(os.getenv("CRAWLER_RETRY_HOURS", "24")))
@@ -1331,20 +1312,6 @@ def main_with_scraper() -> None:
     """使用Scraper模块的命令行入口函数"""
     ap = build_scraper_arg_parser()
     args = ap.parse_args()
-    config_data = {}
-    if args.config:
-        with open(args.config, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
-
-    api_token = args.api_token or config_data.get("crawler_api_token") or os.getenv("CRAWLER_API_TOKEN")
-    silicon_key = args.siliconflow_api_key or config_data.get("siliconflow_api_key") or os.getenv("SILICONFLOW_API_KEY")
-
-    if not api_token:
-        raise ValueError("CRAWLER_API_TOKEN is required. Provide via --api-token, config file, or env variable.")
-    if not silicon_key:
-        raise ValueError("SILICONFLOW_API_KEY is required. Provide via --siliconflow-api-key, config file, or env variable.")
-
-    os.environ["SILICONFLOW_API_KEY"] = silicon_key
 
     # 动态导入Scraper模块
     import Scraper
@@ -1352,7 +1319,7 @@ def main_with_scraper() -> None:
     cfg = Scraper.ScrapeConfig(
         output_dir=args.output_dir,
         api_url=args.api_url,
-        api_token=api_token,
+        api_token=args.api_token,
         max_urls=max(1, args.max_urls),
         concurrency=max(1, args.concurrency),
         retry_interval_hours=max(1, args.retry_hours),

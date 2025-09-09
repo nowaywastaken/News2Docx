@@ -43,6 +43,7 @@ from unified_logger import (
 
 # API配置
 DEFAULT_CRAWLER_API_URL = "https://gdelt-xupojkickl.cn-hongkong.fcapp.run"
+DEFAULT_CRAWLER_API_TOKEN = "token-7eiac9018c346ge9c93ef25266ai"
 
 # 文件和路径配置
 DEFAULT_OUTPUT_DIR = ""
@@ -118,7 +119,7 @@ class ScrapeConfig:
     """新闻爬虫配置类"""
     output_dir: str = DEFAULT_OUTPUT_DIR
     api_url: str = os.getenv("CRAWLER_API_URL", DEFAULT_CRAWLER_API_URL)
-    api_token: Optional[str] = field(default_factory=lambda: os.getenv("CRAWLER_API_TOKEN"))
+    api_token: str = os.getenv("CRAWLER_API_TOKEN", DEFAULT_CRAWLER_API_TOKEN)
     scraped_urls_file: str = DEFAULT_SCRAPED_URLS_FILE
     failed_urls_file: str = DEFAULT_FAILED_URLS_FILE
     retry_interval_hours: int = DEFAULT_RETRY_INTERVAL_HOURS
@@ -144,12 +145,6 @@ class ScrapeConfig:
     random_seed: Optional[int] = (
         int(os.getenv("CRAWLER_RANDOM_SEED")) if os.getenv("CRAWLER_RANDOM_SEED") else None
     )
-
-    def __post_init__(self) -> None:
-        if not self.api_token:
-            raise ValueError(
-                "CRAWLER_API_TOKEN is required. Set environment variable or pass --api-token"
-            )
 
 
 @dataclass
@@ -1085,16 +1080,10 @@ def main() -> None:
     ap = build_arg_parser()
     args = ap.parse_args()
 
-    api_token = args.api_token or os.getenv("CRAWLER_API_TOKEN")
-    if not api_token:
-        raise ValueError(
-            "CRAWLER_API_TOKEN is required. Set environment variable or use --api-token"
-        )
-
     cfg = ScrapeConfig(
         output_dir=args.output_dir,
         api_url=args.api_url or DEFAULT_CRAWLER_API_URL,
-        api_token=api_token,
+        api_token=args.api_token or DEFAULT_CRAWLER_API_TOKEN,
         max_urls=max(1, args.max_urls),
         concurrency=max(1, args.concurrency),
         retry_interval_hours=max(1, args.retry_hours),
