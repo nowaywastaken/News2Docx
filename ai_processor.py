@@ -46,11 +46,9 @@ from unified_logger import (
 
 # API配置
 DEFAULT_MODEL_ID = os.environ.get("SILICONFLOW_MODEL", "THUDM/glm-4-9b-chat")
-DEFAULT_SILICONFLOW_API_KEY = "sk-uxbxbsykbjkvvndwycojnnzdngyqcwpvldgczgljuqklsjas"
 DEFAULT_SILICONFLOW_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
 # 兼容性别名
-DEFAULT_OPENROUTER_API_KEY = DEFAULT_SILICONFLOW_API_KEY
 DEFAULT_OPENROUTER_URL = DEFAULT_SILICONFLOW_URL
 
 # 性能配置
@@ -240,7 +238,7 @@ def build_translation_prompts(text: str, target_lang: str = "Chinese") -> Tuple[
 
 
 def call_ai_api(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL_ID,
-                api_key: str = DEFAULT_SILICONFLOW_API_KEY, url: str = DEFAULT_SILICONFLOW_URL,
+                api_key: Optional[str] = None, url: str = DEFAULT_SILICONFLOW_URL,
                 max_tokens: int = None) -> Optional[str]:
     """调用AI API的通用函数
 
@@ -255,8 +253,9 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL
     Returns:
         Optional[str]: AI响应内容，失败返回None
     """
+    api_key = api_key or os.getenv("SILICONFLOW_API_KEY")
     if not api_key:
-        raise RuntimeError("API key is empty")
+        raise RuntimeError("SILICONFLOW_API_KEY is required. Set env or pass api_key")
 
     if max_tokens is None:
         max_tokens = estimate_max_tokens(1)
@@ -946,12 +945,13 @@ def backoff_sleep(attempt: int):
 
 def call_siliconflow_tagged_output(title_content_block: str, start_i: int, word_target: str = "300-350") -> str:
     """调用硅基流动 API 生成带标签的输出"""
-    if not DEFAULT_SILICONFLOW_API_KEY:
+    api_key = os.getenv("SILICONFLOW_API_KEY")
+    if not api_key:
         raise RuntimeError("SILICONFLOW_API_KEY is empty. Set environment variable before running.")
     payload_prompts = build_system_and_user_prompt(title_content_block, start_i, word_target)
 
     headers = {
-        "Authorization": f"Bearer {DEFAULT_SILICONFLOW_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
 
@@ -1076,8 +1076,12 @@ def repair_summary_if_too_short(article: Article, draft_content: str, target_wor
 
 请输出扩展后的完整内容："""
 
+    api_key = os.getenv("SILICONFLOW_API_KEY")
+    if not api_key:
+        raise RuntimeError("SILICONFLOW_API_KEY is empty. Set environment variable before running.")
+
     headers = {
-        "Authorization": f"Bearer {DEFAULT_SILICONFLOW_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
 
