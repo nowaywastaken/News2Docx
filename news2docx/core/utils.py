@@ -34,3 +34,10 @@ def safe_filename(filename: str, max_length: int = 255) -> str:
 
     return f"{name}{ext}"
 
+
+def ensure_directory(path: Union[str, Path]) -> Path:
+    """确保目录存在并返回 Path 对象。"""
+    from pathlib import Path as _P
+    p = _P(path)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
