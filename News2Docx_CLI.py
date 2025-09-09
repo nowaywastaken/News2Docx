@@ -40,7 +40,7 @@ from Scraper import (
     ScrapeConfig, ScrapeResults,
     HttpClient, ContentExtractor, NewsAPIService, URLStore,
     NewsProcessingError, ScrapingError, APIError,
-    now_stamp, ensure_directory,
+    ensure_directory,
     build_arg_parser, save_scraped_data_to_json
 )
 from Scraper import NewsScraper as ScraperNewsScraper
@@ -54,8 +54,8 @@ from ai_processor import (
     process_single_article, split_articles_blocks, parse_paragraphs,
     validate_and_adjust_word_count, build_final_json_struct,
     process_articles_concurrent, process_articles_with_two_steps,
-    process_articles_to_words, count_english_words, safe_filename,
-    handle_error, safe_execute, now_stamp,
+    process_articles_to_words,
+    handle_error, safe_execute,
     DEFAULT_MODEL_ID, DEFAULT_SILICONFLOW_API_KEY, DEFAULT_SILICONFLOW_URL,  # 修正常量名
     DEFAULT_BATCH_SIZE, DEFAULT_MAX_TOKENS_HARD_CAP, DEFAULT_USE_TWO_STEP,
     DEFAULT_CONCURRENCY, CHINESE_VARIANT_HINT, SEPARATOR_LINE, MAIN_SEPARATOR,
@@ -63,6 +63,8 @@ from ai_processor import (
     # 新增的两步处理函数
     process_articles_two_steps_concurrent, TARGET_WORD_MIN, TARGET_WORD_MAX
 )
+
+from utils.text import count_english_words, safe_filename, now_stamp
 
 # 统一日志系统导入
 from unified_logger import (

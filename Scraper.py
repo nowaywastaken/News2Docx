@@ -36,6 +36,8 @@ from unified_logger import (
     log_api_call, log_file_operation, log_batch_processing
 )
 
+from utils.text import now_stamp, count_english_words, safe_filename
+
 
 # -------------------------------
 # 常量和配置定义
@@ -176,37 +178,6 @@ class ScrapeResults:
             "successful_urls": list(self.successful_urls),
             "failed_urls": list(self.failed_urls),
         }
-
-
-def now_stamp() -> str:
-    """生成当前时间戳字符串"""
-    return time.strftime("%Y%m%d_%H%M%S")
-
-
-def count_english_words(text: str) -> int:
-    """统计英文单词数，排除HTML标签和标点"""
-    if not text:
-        return 0
-
-    # 移除HTML标签
-    text = re.sub(r'<[^>]+>', '', text)
-    # 移除标点并按空格分割
-    words = re.findall(r'\b\w+\b', text)
-    return len(words)
-
-
-def safe_filename(filename: str, max_length: int = 255) -> str:
-    """清理文件名，移除不安全字符并限制长度"""
-    if not filename:
-        return "untitled_document"
-
-    safe_name = re.sub(r'[\/:*?"<>|]', '_', filename.strip())
-    safe_name = safe_name.strip(' .')
-    if len(safe_name) > max_length:
-        safe_name = safe_name[:max_length].strip()
-    if not safe_name:
-        safe_name = "untitled_document"
-    return safe_name
 
 
 def ensure_directory(path: Union[str, Path]) -> Path:

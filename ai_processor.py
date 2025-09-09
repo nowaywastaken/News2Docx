@@ -40,6 +40,7 @@ from unified_logger import (
     log_api_call, log_batch_processing
 )
 
+from utils.text import now_stamp, count_english_words, safe_filename
 # -------------------------------
 # 常量和配置定义
 # -------------------------------
@@ -147,21 +148,6 @@ class DocumentError(Exception):
 # 工具函数
 # -------------------------------
 
-def now_stamp() -> str:
-    """生成当前时间戳字符串"""
-    return time.strftime("%Y%m%d_%H%M%S")
-
-
-def count_english_words(text: str) -> int:
-    """统计英文单词数，排除HTML标签和标点"""
-    if not text:
-        return 0
-
-    # 移除HTML标签
-    text = re.sub(r'<[^>]+>', '', text)
-    # 移除标点并按空格分割
-    words = re.findall(r'\b\w+\b', text)
-    return len(words)
 
 
 def calculate_word_adjustment_percentage(current_words: int, target_min: int = TARGET_WORD_MIN, target_max: int = TARGET_WORD_MAX) -> float:
@@ -324,27 +310,6 @@ def call_siliconflow_tagged_output(title_content_block: str, start_i: int, word_
 def call_openrouter_tagged_output(title_content_block: str, start_i: int, word_target: str = "300-350") -> str:
     """OpenRouter API 调用函数（兼容性函数，重定向到硅基流动）"""
     return call_siliconflow_tagged_output(title_content_block, start_i, word_target)
-
-
-def safe_filename(filename: str, max_length: int = 255) -> str:
-    """清理文件名，移除不安全字符并限制长度"""
-    if not filename:
-        return f"untitled_{now_stamp()}"
-
-    # 移除不安全字符
-    safe_name = re.sub(r'[^\w\s.-]', '', filename)
-    # 移除多余的空格和点
-    safe_name = re.sub(r'\s+', ' ', safe_name).strip()
-    safe_name = re.sub(r'\.+', '.', safe_name)
-
-    # 限制长度
-    if len(safe_name) > max_length:
-        name_part, ext = os.path.splitext(safe_name)
-        ext_len = len(ext)
-        max_name_len = max_length - ext_len
-        safe_name = name_part[:max_name_len] + ext
-
-    return safe_name
 
 
 def handle_error(error: Exception, context: str = "操作", program: str = "ai_processor", task_type: str = "processing") -> None:
