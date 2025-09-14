@@ -196,9 +196,9 @@ def do_job(
     timespan,
     max_per_call,
     sort,
-    fetch: Callable[..., dict] = None,
+    fetch: Optional[Callable[..., dict]] = None,
     batch_size: Optional[int] = None,
-    extractor: Callable[[dict, str], List[str]] = None,
+    extractor: Optional[Callable[[dict, str], List[str]]] = None,
 ):
     """
     分批（每批<=BATCH_SIZE个域名）调用 GDELT，再合并去重。
