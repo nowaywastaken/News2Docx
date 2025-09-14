@@ -14,9 +14,15 @@ from news2docx.scrape.runner import (
     save_scraped_data_to_json,
 )
 from news2docx.process.engine import Article as ProcArticle
-from news2docx.process.engine import process_articles_two_steps_concurrent
 from news2docx.core.config import load_config_file, load_env, merge_config
 from news2docx.core.utils import now_stamp, ensure_directory
+from news2docx.cli.common import ensure_siliconflow_env
+from news2docx.services.processing import (
+    articles_from_json,
+    articles_from_scraped,
+    process_articles as svc_process_articles,
+)
+from news2docx.services.runs import runs_base_dir, latest_run_dir, clean_runs as svc_clean_runs
 
 
 app = typer.Typer(help="News2Docx CLI: scrape, process, run, export")
@@ -111,37 +117,15 @@ def process(
     with input_json.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
-    articles_raw = data.get("articles", [])
-    articles: list[ProcArticle] = []
-    for a in articles_raw:
-        try:
-            idx = int(a.get("id") or a.get("index") or 0)
-        except Exception:
-            idx = 0
-        art = ProcArticle(
-            index=idx,
-            url=a.get("url", ""),
-            title=a.get("title", ""),
-            content=a.get("content", ""),
-            content_length=int(a.get("content_length", 0) or 0),
-            word_count=int(a.get("words", 0) or a.get("word_count", 0) or 0),
-        )
-        articles.append(art)
+    articles: list[ProcArticle] = articles_from_json(data)
 
     if not articles:
         typer.secho("No articles to process in input.", fg=typer.colors.YELLOW)
         raise typer.Exit(code=1)
 
     conf = merge_config(load_config_file(config), load_env(), {"target_language": target_language})
-    # Ensure engine can read API key from env if provided in config
-    if conf.get("siliconflow_api_key") and not os.getenv("SILICONFLOW_API_KEY"):
-        os.environ["SILICONFLOW_API_KEY"] = str(conf.get("siliconflow_api_key"))
-    merge_short = conf.get("merge_short_paragraph_chars")
-    try:
-        merge_short = int(merge_short) if merge_short is not None else None
-    except Exception:
-        merge_short = None
-    result = process_articles_two_steps_concurrent(articles, target_lang=conf.get("target_language") or "Chinese", merge_short_chars=merge_short)
+    ensure_siliconflow_env(conf)
+    result = svc_process_articles(articles, conf)
 
     ts = _ts()
     out_path = Path(f"processed_news_{ts}.json")
@@ -190,8 +174,7 @@ def run(
         },
     )
     # Ensure engine can read API key from env if provided in config
-    if conf.get("siliconflow_api_key") and not os.getenv("SILICONFLOW_API_KEY"):
-        os.environ["SILICONFLOW_API_KEY"] = str(conf.get("siliconflow_api_key"))
+    ensure_siliconflow_env(conf)
 
     token = conf.get("crawler_api_token") or os.getenv("CRAWLER_API_TOKEN")
     if not token:
@@ -199,7 +182,7 @@ def run(
         raise typer.Exit(code=2)
 
     run_id = _ts()
-    run_dir = ensure_directory(Path("runs") / run_id)
+    run_dir = ensure_directory(runs_base_dir(conf) / run_id)
 
     cfg = ScrapeConfig(
         api_url=conf.get("crawler_api_url") or DEFAULT_CRAWLER_API_URL,
@@ -230,28 +213,8 @@ def run(
     _echo(f"Saved scraped JSON: {scraped_path}")
 
     # Convert scraped Article (scrape.runner) -> engine Article
-    arts: list[ProcArticle] = []
-    for a in results.articles:
-        try:
-            idx = int(getattr(a, "index", 0) or 0)
-        except Exception:
-            idx = 0
-        arts.append(
-            ProcArticle(
-                index=idx,
-                url=getattr(a, "url", ""),
-                title=getattr(a, "title", ""),
-                content=getattr(a, "content", ""),
-                content_length=int(getattr(a, "content_length", 0) or 0),
-                word_count=int(getattr(a, "word_count", 0) or 0),
-            )
-        )
-    merge_short = conf.get('merge_short_paragraph_chars')
-    try:
-        merge_short = int(merge_short) if merge_short is not None else None
-    except Exception:
-        merge_short = None
-    processed = process_articles_two_steps_concurrent(arts, target_lang=conf.get("target_language") or "Chinese", merge_short_chars=merge_short)
+    arts: list[ProcArticle] = articles_from_scraped(results.articles)
+    processed = svc_process_articles(arts, conf)
     processed_path = run_dir / "processed.json"
     processed_path.write_text(json.dumps(processed, ensure_ascii=False, indent=2), encoding="utf-8")
     _echo(f"Saved processed JSON: {processed_path}")
@@ -265,40 +228,23 @@ def run(
     )
 
     if export_flag:
-        from news2docx.export.docx import DocumentWriter, DocumentConfig
-
         export_conf = merge_config(
             load_config_file(config),
             load_env(),
-            {
-                "export_order": (order.lower() if isinstance(order, str) else order),
-                "export_mono": mono,
-            },
+            {"export_order": (order.lower() if isinstance(order, str) else order), "export_mono": mono},
         )
-        desktop_dir = _desktop_outdir()
-        out_dir_cfg = export_conf.get("export_out_dir")
-        export_dir = Path(str(out_dir_cfg)) if out_dir_cfg else desktop_dir
-        from news2docx.export.docx import FontConfig as _FontCfg
-        cfg_doc = DocumentConfig(
-            bilingual=not bool(export_conf.get("export_mono") or False),
-            order=str(export_conf.get("export_order") or "zh-en").lower(),
-            first_line_indent_cm=float(export_conf.get("export_first_line_indent_cm") or 0.74),
-            font_zh=_FontCfg(name=str(export_conf.get("export_font_zh_name") or 'SimSun'), size_pt=float(export_conf.get("export_font_zh_size") or 10.5)),
-            font_en=_FontCfg(name=str(export_conf.get("export_font_en_name") or 'Cambria'), size_pt=float(export_conf.get("export_font_en_size") or 10.5)),
-            title_size_multiplier=float(export_conf.get("export_title_size_multiplier") or 1.0),
-            title_bold=bool(export_conf.get("export_title_bold") if export_conf.get("export_title_bold") is not None else True),
+        from news2docx.services.exporting import export_processed
+        res = export_processed(
+            processed_path,
+            export_conf,
+            output=output,
+            split=split_flag,
+            default_filename=f"news_{run_id}.docx",
         )
-        out_path = (export_dir / (output.name if (output and output.suffix.lower()=='.docx') else f"news_{run_id}.docx")) if output else (export_dir / f"news_{run_id}.docx")
-        writer = DocumentWriter(cfg_doc)
-        data = json.loads(processed_path.read_text(encoding="utf-8"))
-        if split_flag:
-            # Use configured output directory (or Desktop)
-            out_dir = str(export_dir)
-            paths = writer.write_per_article(data, out_dir)
-            _echo(f"Exported {len(paths)} DOCX files")
+        if res.get("split"):
+            _echo(f"Exported {len(res.get('paths', []))} DOCX files")
         else:
-            writer.write_from_processed(data, str(out_path))
-            _echo(f"Exported DOCX: {out_path}")
+            _echo(f"Exported DOCX: {res.get('path')}")
 
 
 @app.command()
@@ -311,40 +257,30 @@ def export(
     config: Optional[Path] = typer.Option(None, "--config", exists=True, dir_okay=False, readable=True),
 ) -> None:
     """Export a DOCX document from processed JSON."""
-    from news2docx.export.docx import DocumentWriter, DocumentConfig
-
     if processed_json is None:
-        runs = sorted((Path("runs").glob("*/processed.json")), key=lambda p: p.stat().st_mtime, reverse=True)
+        base_dir = runs_base_dir()
+        runs = sorted((base_dir.glob("*/processed.json")), key=lambda p: p.stat().st_mtime, reverse=True)
         if not runs:
             typer.secho("No runs/*/processed.json found; please provide a path.", fg=typer.colors.RED)
             raise typer.Exit(code=2)
         processed_json = runs[0]
-    data = json.loads(processed_json.read_text(encoding="utf-8"))
     ts = _ts()
     conf = merge_config(load_config_file(config), load_env(), {
         "export_order": (order.lower() if isinstance(order, str) else order),
         "export_mono": mono,
     })
-    desktop_dir = _desktop_outdir()
-    out_dir_cfg = conf.get("export_out_dir")
-    export_dir = Path(str(out_dir_cfg)) if out_dir_cfg else desktop_dir
-    out_path = (export_dir / (output.name if (output and output.suffix.lower()=='.docx') else f"news_{ts}.docx")) if output else (export_dir / f"news_{ts}.docx")
-
-    cfg_doc = DocumentConfig(
-        bilingual=not bool(conf.get("export_mono") or False),
-        order=str(conf.get("export_order") or "zh-en").lower(),
+    from news2docx.services.exporting import export_processed
+    res = export_processed(
+        processed_json,
+        conf,
+        output=output,
+        split=split,
+        default_filename=f"news_{ts}.docx",
     )
-    writer = DocumentWriter(cfg_doc)
-    split_flag = split if split is not None else bool(
-        conf.get("export_split") if conf.get("export_split") is not None else True
-    )
-    if split_flag:
-        out_dir = str(export_dir)
-        paths = writer.write_per_article(data, out_dir)
-        _echo(f"Exported {len(paths)} DOCX files")
+    if res.get("split"):
+        _echo(f"Exported {len(res.get('paths', []))} DOCX files")
     else:
-        writer.write_from_processed(data, str(out_path))
-        _echo(f"Exported DOCX: {out_path}")
+        _echo(f"Exported DOCX: {res.get('path')}")
 
 
 @app.command()
@@ -357,8 +293,7 @@ def doctor(
     ok = True
     conf = merge_config(load_config_file(config), load_env())
     # propagate API key from config to env if needed
-    if conf.get("siliconflow_api_key") and not os.getenv("SILICONFLOW_API_KEY"):
-        os.environ["SILICONFLOW_API_KEY"] = str(conf.get("siliconflow_api_key"))
+    ensure_siliconflow_env(conf)
 
     sf_key = os.getenv("SILICONFLOW_API_KEY")
     crawler_token = os.getenv("CRAWLER_API_TOKEN") or str(conf.get("crawler_api_token") or "")
@@ -404,7 +339,7 @@ def doctor(
 @app.command()
 def stats() -> None:
     """Show number of runs and latest run id."""
-    runs_dir = Path("runs")
+    runs_dir = runs_base_dir()
     if not runs_dir.exists():
         typer.echo("runs directory not found")
         return
@@ -416,15 +351,10 @@ def stats() -> None:
 @app.command()
 def clean(keep: int = typer.Option(3, '--keep', min=0, help='Keep the latest N runs/* directories')) -> None:
     """Remove old runs directories, keeping the most recent N."""
-    runs = sorted(Path('runs').glob('*'), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in runs[keep:]:
-        try:
-            for f in p.glob('*'):
-                f.unlink(missing_ok=True)
-            p.rmdir()
-            typer.echo(f"Deleted {p}")
-        except Exception as e:
-            typer.secho(f"Unable to delete {p}: {e}", fg=typer.colors.YELLOW)
+    base = runs_base_dir()
+    deleted = svc_clean_runs(base, keep)
+    for p in deleted:
+        typer.echo(f"Deleted {p}")
 
 
 @app.command()
@@ -433,11 +363,11 @@ def resume(
     config: Optional[Path] = typer.Option(None, '--config', exists=True, dir_okay=False, readable=True),
 ) -> None:
     """Resume from latest runs/<run_id>: if processed.json is missing, process scraped.json to generate it."""
-    runs = sorted(Path('runs').glob('*'), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not runs:
+    base = runs_base_dir()
+    latest = latest_run_dir(base)
+    if not latest:
         typer.secho('No runs/* directories found', fg=typer.colors.YELLOW)
         raise typer.Exit(code=1)
-    latest = runs[0]
     scraped_path = latest / 'scraped.json'
     processed = latest / 'processed.json'
     if processed.exists():
@@ -445,26 +375,8 @@ def resume(
         raise typer.Exit(code=0)
     conf = merge_config(load_config_file(config), load_env(), {"target_language": target_language})
     data = json.loads(scraped_path.read_text(encoding='utf-8'))
-    arts: list[ProcArticle] = []
-    for a in data.get('articles', []):
-        try:
-            idx = int(a.get('id') or a.get('index') or 0)
-        except Exception:
-            idx = 0
-        arts.append(ProcArticle(
-            index=idx,
-            url=a.get('url',''),
-            title=a.get('title',''),
-            content=a.get('content',''),
-            content_length=int(a.get('content_length',0) or 0),
-            word_count=int(a.get('words',0) or a.get('word_count',0) or 0),
-        ))
-    merge_short = conf.get('merge_short_paragraph_chars')
-    try:
-        merge_short = int(merge_short) if merge_short is not None else None
-    except Exception:
-        merge_short = None
-    res = process_articles_two_steps_concurrent(arts, target_lang=conf.get('target_language') or 'Chinese', merge_short_chars=merge_short)
+    arts = articles_from_json(data)
+    res = svc_process_articles(arts, conf)
     processed.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding='utf-8')
     typer.echo(f"Resume processing done: {processed}")
 

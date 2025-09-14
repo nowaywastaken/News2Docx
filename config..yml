@@ -1,0 +1,41 @@
+# News2Docx example config (copy to config.yml and edit)
+
+# Crawler
+crawler_api_url: "PUT_YOUR_CRAWLER_API_URL_HERE"
+crawler_api_token: "PUT_YOUR_CRAWLER_API_TOKEN_HERE"
+
+# LLM (SiliconFlow)
+siliconflow_api_key: "PUT_YOUR_SF_API_KEY_HERE"
+
+# Scrape
+max_urls: 3
+concurrency: 4
+retry_hours: 24
+timeout: 30
+strict_success: true
+max_api_rounds: 5
+per_url_retries: 2
+pick_mode: random          # random | top
+random_seed: 42            # optional: fixed random seed
+db_path: .n2d_cache/crawled.sqlite3  # store crawled URLs to avoid duplicates
+noise_patterns:            # optional: extra site-noise patterns appended to built-in list
+  - "please refresh"
+  - "cookie"
+
+# Process
+target_language: Chinese
+merge_short_paragraph_chars: 80   # merge English paragraphs shorter than this with a short neighbor
+
+# Export
+run_export: true                 # same as CLI: --export
+export_split: true               # same as CLI: --split (one DOCX per article)
+export_order: en-zh              # same as CLI: --order en-zh (English first)
+export_mono: false               # set true for Chinese-only
+export_out_dir:                  # optional; default is user Desktop/英文新闻稿
+export_first_line_indent_cm: 0.74
+export_font_zh_name: 宋体
+export_font_zh_size: 10.5
+export_font_en_name: Cambria
+export_font_en_size: 10.5
+export_title_bold: true
+export_title_size_multiplier: 1.0
