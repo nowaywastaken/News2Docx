@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 import os
 import json
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional
 from urllib.parse import urlencode
 from itertools import islice
 from pathlib import Path
@@ -9,50 +11,7 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # ========== 默认配置（可用环境变量覆盖）==========
-EMBEDDED_SITES = [
-    "apnews.com",
-    "afp.com",
-    "washingtonpost.com",
-    "wsj.com",
-    "ft.com",
-    "economist.com",
-    "aljazeera.com",
-    "news.sky.com",
-    "theguardian.com",
-    "thetimes.co.uk",
-    "telegraph.co.uk",
-    "independent.co.uk",
-    "itv.com/news",
-    "channel4.com/news",
-    "euronews.com",
-    "politico.com",
-    "axios.com",
-    "theatlantic.com",
-    "usatoday.com",
-    "latimes.com",
-    "npr.org",
-    "pbs.org/newshour",
-    "abcnews.go.com",
-    "cbsnews.com",
-    "nbcnews.com",
-    "cnbc.com",
-    "marketwatch.com",
-    "forbes.com",
-    "fortune.com",
-    "theglobeandmail.com",
-    "cbc.ca",
-    "ctvnews.ca",
-    "nationalpost.com",
-    "bbc.com", "bbc.co.uk",
-    "cnn.com",
-    "nytimes.com",
-    "who.int",
-    "technologyreview.com",
-    "wired.com",
-    "theverge.com",
-    "time.com",
-]
-DEFAULT_SITES_FILE = Path(__file__).with_name("news_website.txt")
+DEFAULT_SITES: List[str] = []
 
 def _read_sites_from_file(path: Path):
     try:
@@ -67,14 +26,28 @@ def _read_sites_from_file(path: Path):
         out.append(s)
     return out
 
-def default_sites():
+def default_sites() -> List[str]:
     p = os.getenv("SITES_FILE")
-    path = Path(p) if p else DEFAULT_SITES_FILE
-    s = _read_sites_from_file(path)
-    return s
+    if not p:
+        return []
+    return _read_sites_from_file(Path(p))
 
-# Load default sites from file if available; fallback to embedded list
-DEFAULT_SITES = default_sites() or EMBEDDED_SITES
+def _env_sites_or(default_list: List[str]) -> List[str]:
+    """读取站点清单，优先 `Websites` (JSON 数组字符串)，其次 `SITES` (CSV)。"""
+    v = os.getenv("Websites")
+    if v:
+        try:
+            data = json.loads(v)
+            if isinstance(data, list):
+                return [str(x).strip() for x in data if str(x).strip()]
+        except Exception:
+            # 若 JSON 解析失败，回退 CSV 逻辑
+            pass
+    v2 = os.getenv("SITES")
+    if v2:
+        return [x.strip() for x in v2.split(",") if x.strip()]
+    return list(default_list or [])
+
 DEFAULT_TIMESPAN = "7d"        # 过去7天；也可用 24h/30d 或改为绝对时间（另写startdatetime/enddatetime）
 DEFAULT_MAX = 50               # 最多返回50条
 DEFAULT_SORT = "datedesc"      # 最新在前
@@ -85,6 +58,41 @@ REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; FC-Python312-GDELT/1.0)",
     "Accept": "application/json,text/plain,*/*",
 }
+
+# ========== 运行期配置（便于测试与解耦） ==========
+@dataclass
+class Config:
+    """运行参数配置。尽量避免在导入阶段做I/O。"""
+    sites: List[str]
+    timespan: str = DEFAULT_TIMESPAN
+    max_per_call: int = DEFAULT_MAX
+    sort: str = DEFAULT_SORT
+    batch_size: int = BATCH_SIZE
+    base_url: str = BASE
+    headers: Dict[str, str] = field(default_factory=lambda: dict(REQUEST_HEADERS))
+    timeout: int = 20
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        """根据环境变量构建配置。若未提供 SITES，则优先读同目录 news_website.txt，其次用内置清单。"""
+        # 若未设置 SITES，则在运行期尝试读取本地文件
+        sites_default = default_sites() or DEFAULT_SITES
+        sites = _env_sites_or(sites_default)
+        timespan = os.getenv("TIMESPAN", DEFAULT_TIMESPAN)
+        max_per_call = env_int("MAX_PER_CALL", DEFAULT_MAX)
+        sort = os.getenv("SORT", DEFAULT_SORT)
+        batch_size = env_int("BATCH_SIZE", BATCH_SIZE)
+        timeout = env_int("TIMEOUT", 20)
+        return cls(
+            sites=sites,
+            timespan=timespan,
+            max_per_call=max_per_call,
+            sort=sort,
+            batch_size=batch_size,
+            base_url=BASE,
+            headers=dict(REQUEST_HEADERS),
+            timeout=timeout,
+        )
 
 # ========== 工具函数 ==========
 def env_list(name, default_list):
@@ -110,6 +118,9 @@ def chunk(lst, n):
 
 def build_query_from_sites(sites):
     """
+    bs = batch_size or BATCH_SIZE
+    fetch = fetch or gdelt_fetch
+    extractor = extractor or extract_urls
     用 domainis: 精确匹配域名，避免 'keywords too common' / 非JSON错误页。
     例：(domainis:bbc.com OR domainis:cnn.com ...)
     """
@@ -179,14 +190,26 @@ def extract_urls(raw_json, lang="eng"):
     return out
 
 
-def do_job(*, sites, timespan, max_per_call, sort):
+def do_job(
+    *,
+    sites,
+    timespan,
+    max_per_call,
+    sort,
+    fetch: Callable[..., dict] = None,
+    batch_size: Optional[int] = None,
+    extractor: Callable[[dict, str], List[str]] = None,
+):
     """
     分批（每批<=BATCH_SIZE个域名）调用 GDELT，再合并去重。
     """
+    bs = batch_size or BATCH_SIZE
+    fetch = fetch or gdelt_fetch
+    extractor = extractor or extract_urls
     all_urls, seen = [], set()
-    for batch in chunk(sites, BATCH_SIZE):
+    for batch in chunk(sites, bs):
         query = build_query_from_sites(batch)
-        data = gdelt_fetch(query=query, timespan=timespan, maxrecords=max_per_call, sort=sort)
+        data = fetch(query=query, timespan=timespan, maxrecords=max_per_call, sort=sort)
         urls = extract_urls(data, lang="eng")  # ✅ 强制只取英文
         for u in urls:
             if u not in seen:
@@ -195,7 +218,7 @@ def do_job(*, sites, timespan, max_per_call, sort):
     return {"count": len(all_urls), "urls": all_urls}
 
 # ========== 事件函数入口 ==========
-def handler(event, context):
+def handler(event, context, *, cfg: Optional[Config] = None, session: Optional[requests.Session] = None):
     """
     事件函数签名：handler(event, context)
     在控制台“测试函数”里传 {} 即可。
@@ -205,13 +228,15 @@ def handler(event, context):
       MAX_PER_CALL="250"
       SORT="datedesc"      # 或 "dateasc"
     """
-    sites = env_list("SITES", DEFAULT_SITES)
-    timespan = os.getenv("TIMESPAN", DEFAULT_TIMESPAN)
-    max_per_call = env_int("MAX_PER_CALL", DEFAULT_MAX)
-    sort = os.getenv("SORT", DEFAULT_SORT)
+    cfg = cfg or Config.from_env()
 
     try:
-        result = do_job(sites=sites, timespan=timespan, max_per_call=max_per_call, sort=sort)
+        result = do_job(
+            sites=cfg.sites,
+            timespan=cfg.timespan,
+            max_per_call=cfg.max_per_call,
+            sort=cfg.sort,
+        )
         return json.dumps(result, ensure_ascii=False).encode("utf-8")
     except Exception as e:
         # 返回结构化错误，便于在控制台排查
@@ -219,10 +244,10 @@ def handler(event, context):
             "error": e.__class__.__name__,
             "message": str(e),
             "params": {
-                "sites": sites,
-                "timespan": timespan,
-                "max_per_call": max_per_call,
-                "sort": sort,
+                "sites": cfg.sites,
+                "timespan": cfg.timespan,
+                "max_per_call": cfg.max_per_call,
+                "sort": cfg.sort,
             },
             "hint": "若仍失败：先把 TIMESPAN 改为 24h；或调小域名数量；或检查函数是否能出公网（VPC需NAT）。"
         }

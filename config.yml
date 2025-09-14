@@ -1,23 +1,23 @@
-﻿# News2Docx example config (copy to config.yml and edit)
+# News2Docx 示例配置（复制为 config.yml 后编辑）
 
-# Crawler
-# crawler_mode: remote | local (default: remote)
+# 爬虫
+# crawler_mode: remote | local（默认：remote）
 crawler_mode: remote
-# When mode=remote
+# 当 mode=remote 时
 crawler_api_url: "PUT_YOUR_CRAWLER_API_URL_HERE"
 crawler_api_token: "PUT_YOUR_CRAWLER_API_TOKEN_HERE"
-# When mode=local (directly query GDELT; may be blocked in mainland China)
+# 当 mode=local 时（直接访问 GDELT；中国大陆可能被屏蔽）
 crawler_sites_file: server/news_website.txt
-# Optional GDELT params (local mode)
-# gdelt_timespan: "7d"        # e.g., 24h / 7d / 30d
-# gdelt_max_per_call: 50       # per batch
-# gdelt_sort: datedesc         # datedesc | dateasc
+# 可选 GDELT 参数（本地模式）
+# gdelt_timespan: "7d"        # 例如：24h / 7d / 30d
+# gdelt_max_per_call: 50       # 每批数量
+# gdelt_sort: datedesc         # datedesc | dateasc（按日期降序/升序）
 
-# LLM (OpenAI-Compatible)
+# LLM（兼容 OpenAI 接口）
 openai_api_base: "https://api.siliconflow.cn/v1"
 openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
 
-# Scrape
+# 抓取
 max_urls: 3
 concurrency: 4
 retry_hours: 24
@@ -25,25 +25,25 @@ timeout: 30
 strict_success: true
 max_api_rounds: 5
 per_url_retries: 2
-pick_mode: random          # random | top
-random_seed: 42            # optional: fixed random seed
-db_path: .n2d_cache/crawled.sqlite3  # store crawled URLs to avoid duplicates
-noise_patterns:            # optional: extra site-noise patterns appended to built-in list
+pick_mode: random          # random | top（选择方式）
+random_seed: 42            # 可选：固定随机种子
+db_path: .n2d_cache/crawled.sqlite3  # 存储已抓取的 URL，避免重复
+noise_patterns:            # 可选：在内置列表后追加站点噪声关键词
   - "please refresh"
   - "cookie"
 
-# Process
+# 处理
 target_language: Chinese
-merge_short_paragraph_chars: 80   # merge English paragraphs shorter than this with a short neighbor
+merge_short_paragraph_chars: 80   # 将短于该长度的英文段落与相邻短段合并
 
-# Export
-run_export: true                 # same as CLI: --export
-export_split: true               # same as CLI: --split (one DOCX per article)
-export_order: en-zh              # same as CLI: --order en-zh (English first)
-export_mono: false               # set true for Chinese-only
-export_out_dir:                  # optional; default is user Desktop/鑻辨枃鏂伴椈绋?
+# 导出
+run_export: true                 # 等价 CLI：--export
+export_split: true               # 等价 CLI：--split（每篇一个 DOCX）
+export_order: en-zh              # 等价 CLI：--order en-zh（英文在前）
+export_mono: false               # 设为 true 仅输出中文
+export_out_dir:                  # 可选；默认输出到“用户桌面/英文新闻”
 export_first_line_indent_cm: 0.74
-export_font_zh_name: 瀹嬩綋
+export_font_zh_name: 宋体
 export_font_zh_size: 10.5
 export_font_en_name: Cambria
 export_font_en_size: 10.5
