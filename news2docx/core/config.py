@@ -41,7 +41,9 @@ def load_env() -> Dict[str, Any]:
     d: Dict[str, Any] = {
         "crawler_api_url": env.get("CRAWLER_API_URL"),
         "crawler_api_token": env.get("CRAWLER_API_TOKEN"),
-        "siliconflow_api_key": env.get("SILICONFLOW_API_KEY"),
+        # OpenAI-Compatible envs only
+        "openai_api_key": env.get("OPENAI_API_KEY"),
+        "openai_api_base": env.get("OPENAI_API_BASE"),
         "max_urls": _to_int(env.get("CRAWLER_MAX_URLS")),
         "concurrency": _to_int(env.get("CONCURRENCY")),
         "retry_hours": _to_int(env.get("CRAWLER_RETRY_HOURS")),

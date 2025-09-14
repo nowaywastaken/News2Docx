@@ -1,219 +1,203 @@
 # News2Docx
 
-一键抓取英文新闻，自动控字与双语翻译，导出为排版规范的 DOCX 文档。
+轻量、可配置的英文新闻到 DOCX 工具：抓 URL、并发抓正文、AI 控字与翻译、导出规范排版文档。
+
+![python](https://img.shields.io/badge/python-3.11%2B-blue.svg) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
+
 English summary: Fetch English news, condense to target length, translate to Chinese, and export nicely formatted DOCX via a simple CLI.
 
-- 抓取来源：可配置聚合 API 返回 URL；内置常见站点正文选择器，支持自定义覆盖。
-- 文本处理：并发调用 LLM（SiliconFlow Chat Completions 兼容）完成“字数调整 + 双语翻译”，保持段落对齐。
-- 文档导出：按教辅/作文材料常用规范生成 DOCX（标题居中、首行缩进、可配置中英字体），支持合并导出或按篇拆分。
+## Features
 
-## 环境要求
+- 简洁：单命令端到端，或按阶段拆分运行。
+- 可选抓取模式：remote（默认，国内网络友好）/ local（直连 GDELT）。
+- 并发与去噪：内置站点选择器 + 噪声过滤，支持覆盖自定义选择器。
+- 两步 AI 流程：字数调整 400–450 词 + 精准段落对齐翻译（OpenAI-Compatible）。
+- DOCX 导出：标题居中、首行缩进、可配中英字体；合并导出或按篇拆分。
+- 可移植：Windows/macOS/Linux；配置文件与环境变量双通道。
 
-- Python 3.11+（推荐 3.11/3.12）
-- Windows / macOS / Linux
-- 可访问外网（抓取 API 与 LLM 接口）
+## Requirements
 
-## 安装
+- Python 3.11+
+- 可访问外网（抓取端点与 LLM 接口）
 
-使用虚拟环境安装依赖：
-```bash
+## Install
+
+Windows PowerShell：
+
+```powershell
 python -m venv .venv
-# Windows PowerShell
 .venv\Scripts\Activate.ps1
-# macOS/Linux
-source .venv/bin/activate
-
 pip install -r requirements.txt
 ```
 
-可选：本地冒烟（不联网，仅验证导出链路）：
+macOS/Linux：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+可选冒烟（不联网，仅验证导出链路）：
+
 ```bash
 python scripts/smoke.py
 ```
 
-## 快速开始
-1) 复制并编辑配置文件
-- 将根目录下 `config.example.yml` 复制为 `config.yml`，填写：
-  - `crawler_api_url`：抓取 API 地址
-  - `crawler_api_token`：抓取 API Token（必填）
-  - `siliconflow_api_key`：SiliconFlow API Key（必填，用于 AI 处理）
-2) 一条命令端到端（抓取 + 处理 + 可选导出）
+## Quick Start
+
+1) 编辑配置 `config.yml`，至少填入：
+
+- `crawler_api_url`（remote 模式）与 `crawler_api_token`
+- `openai_api_key`（OpenAI-Compatible，必填）
+
+2) 端到端运行：
 
 ```bash
 python -m news2docx.cli.main run --config config.yml
 ```
 
-- 会在 `runs/<时间戳>/` 生成：
-  - `scraped.json`：抓取并抽取后的原文数据
-  - `processed.json`：字数调整与翻译后的结果
-- 如开启导出，将在桌面自动创建目录“英文新闻稿”并导出 DOCX（可在配置中修改输出目录）。
-
-3) 分阶段运行（只抓取 / 只处理 / 只导出）
+3) 分阶段：
 
 ```bash
-# 仅抓取并保存 scraped_news_*.json
+# 仅抓取：保存 scraped_news_*.json
 python -m news2docx.cli.main scrape --config config.yml --max-urls 3
 
-# 仅处理（输入为上一步保存的 JSON），输出 processed_news_*.json
+# 仅处理：输入上一步 JSON，输出 processed_news_*.json
 python -m news2docx.cli.main process scraped_news_20240101_120000.json --config config.yml
 
-# 仅导出（默认选取最新 runs/*/processed.json）
+# 仅导出：默认选取最新 runs/*/processed.json
 python -m news2docx.cli.main export --config config.yml --split/--no-split
 ```
 
-## 命令行用法
-所有命令均支持 `--help` 查看参数说明：
+## CLI
+
 ```bash
 python -m news2docx.cli.main --help
 ```
 
-- `scrape`：调用抓取 API 获取 URL，并发抓取网页正文，保存为 JSON。
-  - 常用参数：`--api-token`、`--api-url`、`--max-urls`、`--concurrency`、`--timeout`、`--retry-hours`、`--strict-success/--no-strict-success`、`--max-api-rounds`、`--per-url-retries`、`--pick-mode [random|top]`、`--random-seed`、`--config`。
-  - 说明：首次使用会在 `.n2d_cache/crawled.sqlite3` 维护已抓取 URL，避免重复。
+- `run`：端到端（抓取 + 两步处理），可选导出 DOCX。
+- `scrape`：调用抓取端点/本地 GDELT，抓正文并保存 JSON。
+- `process`：字数调整 + 翻译，保持段落对齐，输出处理 JSON。
+- `export`：生成 DOCX（可按篇拆分）。
+- `doctor`：体检环境变量与端点连通性（不触发计费）。
+- `stats`/`clean`/`resume`/`combine`：辅助命令。
 
-- `process`：对抓取结果执行“两步处理”（字数调整 + 翻译），输出处理后的 JSON。
-  - 参数：`<input_json>`、`--target-language`（默认 Chinese）、`--config`。
-  - 输出：`processed_news_<时间戳>.json`（当前目录）。
+## Config
 
-- `run`：端到端执行（抓取 + 处理），并可选导出 DOCX。
-  - 抓取参数同 `scrape`；处理参数同 `process`。
-  - 导出相关：`--export/--no-export`、`--order [zh-en|en-zh]`、`--mono`（仅中文）、`--split/--no-split`（默认拆分导出）、`--output`（文件或目录）。
-  - 输出：`runs/<时间戳>/scraped.json`、`runs/<时间戳>/processed.json`；如导出则在“英文新闻稿”（或自定义目录）生成 DOCX。
+参考示例见 `config.yml`，关键字段：
 
-- `export`：将处理结果导出为 DOCX（支持按篇拆分）。
-  - 参数：`[processed_json]`（可省略，自动取最新 `runs/*/processed.json`）、`--order`、`--mono`、`--split/--no-split`、`--output`、`--config`。
+- 抓取：`crawler_mode`（remote|local）、`crawler_api_url`、`crawler_api_token`、`max_urls`、`concurrency`、`retry_hours`、`timeout`、`pick_mode`、`random_seed`、`db_path`、`noise_patterns`
+- 处理：`openai_api_base`、`openai_api_key`、`target_language`、`merge_short_paragraph_chars`
+- 导出：`run_export`、`export_split`、`export_order`（`zh-en`|`en-zh`）、`export_mono`、`export_out_dir`、`export_first_line_indent_cm`、`export_font_*`、`export_title_bold`、`export_title_size_multiplier`
 
-- `doctor`：体检命令，检查关键环境变量与网络连通性（不触发真实计费调用）。
+示例（节选）：
 
-- `stats`：查看 `runs` 目录统计与最近一次运行的 ID。
-
-- `clean`：清理旧的 `runs/*` 目录，默认保留最新 3 个（`--keep N` 可调）。
-
-- `resume`：从最近一次 `runs/<id>` 继续，如缺少 `processed.json` 则基于 `scraped.json` 生成。
-
-- `combine`：将多个 `processed_news_*.json` 合并为一个（`-o/--output` 指定输出路径）。
-
-常用示例：
-```bash
-# 指定导出参数：段落顺序与是否仅导出中文
-python -m news2docx.cli.main run --config config.yml --export --order en-zh --mono false
-
-# 按篇拆分导出（文件名使用中文标题自动去噪）
-python -m news2docx.cli.main export --config config.yml --split
-
-# 体检（网络连通性与关键环境变量）
-python -m news2docx.cli.main doctor
+```yaml
+crawler_mode: remote
+crawler_api_url: "PUT_YOUR_CRAWLER_API_URL_HERE"
+crawler_api_token: "PUT_YOUR_CRAWLER_API_TOKEN_HERE"
+openai_api_base: "https://api.siliconflow.cn/v1"
+openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
+max_urls: 3
+export_split: true
+export_order: en-zh
 ```
 
-## 配置说明（config.yml）
-示例参考 `config.example.yml`。关键项：
+## Environment Vars
 
-- 抓取相关
-  - `crawler_api_url`：抓取 API 地址
-  - `crawler_api_token`：抓取 API Token（必填）
-  - `max_urls`、`concurrency`、`retry_hours`、`timeout`、`strict_success`、`max_api_rounds`、`per_url_retries`、`pick_mode`（random/top）
-  - `random_seed`：固定随机种子（可选）
-  - `db_path`：去重数据库路径（默认 `.n2d_cache/crawled.sqlite3`）
-  - `noise_patterns`：额外噪声关键词（辅助去噪）
-
-- 处理相关（AI）
-  - `siliconflow_api_key`：必填，LLM API Key
-  - `target_language`：目标语言（默认 Chinese）
-  - `merge_short_paragraph_chars`：英文过短段落的合并阈值（默认 80 字符）
-
-- 导出相关（DOCX）
-  - `run_export`：在 `run` 命令中自动导出（等价 `--export`）
-  - `export_split`：是否按篇拆分（等价 `--split`，默认 True）
-  - `export_order`：段落顺序 `en-zh` 或 `zh-en`
-  - `export_mono`：仅导出中文（不含英文）
-  - `export_out_dir`：导出目录（默认桌面“英文新闻稿”）
-  - 字体与版式：`export_first_line_indent_cm`、`export_font_zh_*`、`export_font_en_*`、`export_title_bold`、`export_title_size_multiplier`
-
-- 运行目录
-  - `runs_dir`：自定义 `runs` 根目录（默认 `runs`）
-
-环境变量速查（可与配置文件混用）：
-- 抓取：`CRAWLER_API_URL`、`CRAWLER_API_TOKEN`、`CRAWLER_MAX_URLS`、`CRAWLER_TIMEOUT`、`CRAWLER_RETRY_HOURS`、`CRAWLER_STRICT_SUCCESS`、`CRAWLER_MAX_API_ROUNDS`、`CRAWLER_PER_URL_RETRIES`、`CRAWLER_PICK_MODE`、`CRAWLER_RANDOM_SEED`
-- 处理：`SILICONFLOW_API_KEY`、`SILICONFLOW_URL`、`SILICONFLOW_MODEL`、`CONCURRENCY`、`N2D_CACHE_DIR`、`SF_MIN_INTERVAL_MS`、`MAX_TOKENS_HARD_CAP`
+- 抓取：`CRAWLER_API_URL`、`CRAWLER_API_TOKEN`、`CRAWLER_MAX_URLS`、`CRAWLER_TIMEOUT`、`CRAWLER_RETRY_HOURS`、`CRAWLER_MAX_API_ROUNDS`、`CRAWLER_PER_URL_RETRIES`、`CRAWLER_PICK_MODE`、`CRAWLER_RANDOM_SEED`
+- 处理：`OPENAI_API_KEY`、`OPENAI_API_BASE`、`OPENAI_MODEL`、`CONCURRENCY`、`N2D_CACHE_DIR`、`OPENAI_MIN_INTERVAL_MS`、`MAX_TOKENS_HARD_CAP`
 - 导出：`TARGET_LANGUAGE`、`EXPORT_ORDER`、`EXPORT_MONO`
-- 运行目录：`RUNS_DIR`（等价 `runs_dir`）
-- 选择器覆盖：`SCRAPER_SELECTORS_FILE`（指向你的 JSON/YAML 覆盖文件）
+- 其他：`RUNS_DIR`、`SCRAPER_SELECTORS_FILE`
 
-Windows PowerShell 设置环境变量：
+Windows PowerShell：
+
 ```powershell
 $env:CRAWLER_API_TOKEN = "your_token"
-$env:SILICONFLOW_API_KEY = "your_api_key"
+$env:OPENAI_API_KEY = "your_api_key"
+$env:OPENAI_API_BASE = "https://api.siliconflow.cn/v1"
 ```
 
-Bash 设置环境变量：
+Bash：
+
 ```bash
 export CRAWLER_API_TOKEN="your_token"
-export SILICONFLOW_API_KEY="your_api_key"
+export OPENAI_API_KEY="your_api_key"
+export OPENAI_API_BASE="https://api.siliconflow.cn/v1"
 ```
 
-## 输出与目录结构
-- `runs/<YYYYMMDD_HHMMSS>/scraped.json`：抓取到的文章原文与元信息
-- `runs/<YYYYMMDD_HHMMSS>/processed.json`：处理后的双语结果
-- `Desktop/英文新闻稿/`：默认 DOCX 导出目录（可通过配置修改）
+## Crawler Modes
 
-项目关键目录：
-- `news2docx/cli/main.py`：命令行入口与各子命令
-- `news2docx/scrape/`：抓取逻辑、提取规则与选择器覆盖
-- `news2docx/process/engine.py`：两步处理（字数调整 + 翻译）并发引擎
-- `news2docx/export/docx.py`：DOCX 导出与排版实现
-- `news2docx/services/`：服务层（processing/exporting/runs）
-- `news2docx/core/`：通用配置与工具函数
+- remote（默认）：通过你部署的中转端点返回 URL，再本地抓正文。
+- local：本地直连 GDELT Doc 2.0；站点清单在 `server/news_website.txt`（每行一条，支持 `#` 注释）。
 
-## 架构与模块（v2 重构）
-- CLI 变薄：`news2docx/cli/main.py` 只做参数解析与调度
-- 公共辅助：`news2docx/cli/common.py` 负责环境变量注入与桌面目录定位
-- 服务层：
-  - `news2docx/services/processing.py`：数据转换与处理编排
-  - `news2docx/services/exporting.py`：导出配置与写入
-  - `news2docx/services/runs.py`：运行目录管理（支持 `RUNS_DIR`/`runs_dir`）
-- 向后兼容：命令与参数保持不变；新增 `runs_dir`/`RUNS_DIR` 支持定制输出根目录
+`config.yml` 配置示例：
 
-## 自定义选择器（可选）
-部分站点的正文选择器支持通过文件覆盖：
-```json
-{
-  "bbc.com": {
-    "title":   ["h1[data-testid=\"headline\"]", "h1"],
-    "content": ["[data-component=\"text-block\"] p", "article p", "p"],
-    "remove":  [".ad", "script", "style", "nav", "aside"]
-  }
-}
+```yaml
+# Remote
+crawler_mode: remote
+crawler_api_url: https://<your-crawler-endpoint>
+crawler_api_token: <your-token>
+
+# Local (GDELT)
+# crawler_mode: local
+# crawler_sites_file: server/news_website.txt
+# gdelt_timespan: 7d
+# gdelt_max_per_call: 50
+# gdelt_sort: datedesc
 ```
-运行前设置 `SCRAPER_SELECTORS_FILE=/path/to/your_selectors.yml` 或 `.json`，程序会在内置规则基础上合并你的覆盖项。
 
-## 常见问题（FAQ）
-- 缺少 Token/API Key？
-  - 抓取阶段需要 `CRAWLER_API_TOKEN`，处理阶段需要 `SILICONFLOW_API_KEY`。任一缺失都会导致对应阶段无法运行。
-- 为什么导出的 DOCX 使用中文目录名？
-  - 为便于区分与快速定位，默认导出到桌面中文文件夹“英文新闻稿”；可在配置中改为任意路径。
-- 运行 `process`/`run` 报错：缺少 `SILICONFLOW_API_KEY`？
-  - 请在 `config.yml` 或环境变量中提供 API Key。`doctor` 子命令可帮助检查配置与连通性。
-- YAML 配置读取失败？
-  - 需要安装 `PyYAML`（已在 `requirements.txt` 中）。也可使用 JSON 配置文件。
-- 字数控制为何偶有偏差？
-  - 引擎会在限定范围内多次尝试调整，受模型输出影响，极端情况下可能略有偏离。
+覆盖同名环境变量：`CRAWLER_MODE`、`CRAWLER_API_URL`、`CRAWLER_API_TOKEN`、`CRAWLER_SITES_FILE`、`GDELT_TIMESPAN`、`GDELT_MAX_PER_CALL`、`GDELT_SORT`。
 
-## 开发与测试
-- 代码风格：`black`（120 列）、`ruff`（E/F/I）
-- 单元测试：位于 `tests/`
-- 运行测试（不访问网络）：
+## Examples
+
+- 端到端导出单文件：
+
+```bash
+python -m news2docx.cli.main run --config config.yml --export --no-split -o news.docx
+```
+
+- 端到端按篇导出（默认）：
+
+```bash
+python -m news2docx.cli.main run --config config.yml --export --split
+```
+
+- 仅导出最近一次处理结果：
+
+```bash
+python -m news2docx.cli.main export
+```
+
+- 合并多份处理结果：
+
+```bash
+python -m news2docx.cli.main combine processed_news_*.json -o merged.json
+```
+
+## Troubleshooting
+
+- 缺少 `CRAWLER_API_TOKEN`（remote 模式）：使用 `--api-token` 或设置环境变量，或切换到 local 模式。
+- 缺少 `OPENAI_API_KEY`：在配置或环境变量中提供；可用 `doctor` 检查连通性。
+- 无法直连 GDELT（local 模式）：切换到 remote 模式，或确保网络可达。
+- 导出目录：默认 `Desktop/英文新闻稿`（若未显式配置 `export_out_dir`）。
+
+## Server (Optional)
+
+- `server/index.py` 提供云函数事件函数示例，返回近 7 天英文新闻 URL（基于 GDELT Doc 2.0）。
+- 站点清单：`server/news_website.txt`；可用 `SITES_FILE` 指定外部路径。
+- 云端环境变量：`SITES`、`TIMESPAN`、`MAX_PER_CALL`、`SORT`。
+- 返回结构：`{"count": N, "urls": ["https://..."]}`。
+
+## Development
+
 ```bash
 pytest -q
-```
-- 本地冒烟：
-```bash
 python scripts/smoke.py
 ```
 
-## 风险与注意事项
-- 请妥善保管 `config.yml` 与 API Key，不要提交到公共仓库。
-- 抓取与处理均依赖第三方服务，请遵守目标网站与 API 使用条款。
-- 生成式模型输出可能包含错误或偏差，请在人工审校后再正式使用。
+## License
 
-## 许可
-本项目暂未声明开源许可证。若需在生产或商用场景中使用，请先与作者确认授权条款。
+暂未声明开源许可证；在生产/商用前请与作者确认授权条款。
+

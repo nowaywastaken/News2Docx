@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -16,7 +16,7 @@ from news2docx.scrape.runner import (
 from news2docx.process.engine import Article as ProcArticle
 from news2docx.core.config import load_config_file, load_env, merge_config
 from news2docx.core.utils import now_stamp, ensure_directory
-from news2docx.cli.common import ensure_siliconflow_env
+from news2docx.cli.common import ensure_openai_env
 from news2docx.services.processing import (
     articles_from_json,
     articles_from_scraped,
@@ -40,7 +40,7 @@ def _desktop_outdir() -> Path:
     home = Path.home()
     desktop = home / "Desktop"
     # Use the required Chinese folder name without embedding Chinese characters in source
-    folder_name = "\u82f1\u6587\u65b0\u95fb\u7a3f"  # "英文新闻稿"
+    folder_name = "\u82f1\u6587\u65b0\u95fb\u7a3f"  # "鑻辨枃鏂伴椈绋?
     outdir = desktop / folder_name
     outdir.mkdir(parents=True, exist_ok=True)
     return outdir
@@ -68,6 +68,8 @@ def scrape(
         {
             "crawler_api_token": api_token,
             "crawler_api_url": api_url,
+            "crawler_mode": None,  # from config/env when provided
+            "crawler_sites_file": None,
             "max_urls": max_urls,
             "concurrency": concurrency,
             "retry_hours": retry_hours,
@@ -77,17 +79,26 @@ def scrape(
             "per_url_retries": per_url_retries,
             "pick_mode": pick_mode,
             "random_seed": random_seed,
+            "gdelt_timespan": None,
+            "gdelt_max_per_call": None,
+            "gdelt_sort": None,
         },
     )
 
+    mode = str(conf.get("crawler_mode") or os.getenv("CRAWLER_MODE") or "remote").lower()
     token = conf.get("crawler_api_token") or os.getenv("CRAWLER_API_TOKEN")
-    if not token:
-        typer.secho("Missing CRAWLER_API_TOKEN. Use --api-token or set env.", fg=typer.colors.RED)
+    if mode == "remote" and not token:
+        typer.secho("Missing CRAWLER_API_TOKEN (remote mode). Use --api-token or set env, or switch to local mode.", fg=typer.colors.RED)
         raise typer.Exit(code=2)
 
     cfg = ScrapeConfig(
         api_url=conf.get("crawler_api_url") or DEFAULT_CRAWLER_API_URL,
         api_token=token,
+        mode=mode,
+        sites_file=(conf.get("crawler_sites_file") or os.getenv("CRAWLER_SITES_FILE") or str(Path.cwd() / "server" / "news_website.txt")),
+        gdelt_timespan=(conf.get("gdelt_timespan") or os.getenv("GDELT_TIMESPAN") or "7d"),
+        gdelt_max_per_call=int(conf.get("gdelt_max_per_call") or os.getenv("GDELT_MAX_PER_CALL") or 50),
+        gdelt_sort=(conf.get("gdelt_sort") or os.getenv("GDELT_SORT") or "datedesc"),
         max_urls=int(conf.get("max_urls") or 1),
         concurrency=int(conf.get("concurrency") or 4),
         timeout=int(conf.get("timeout") or 30),
@@ -124,7 +135,7 @@ def process(
         raise typer.Exit(code=1)
 
     conf = merge_config(load_config_file(config), load_env(), {"target_language": target_language})
-    ensure_siliconflow_env(conf)
+    ensure_openai_env(conf)
     result = svc_process_articles(articles, conf)
 
     ts = _ts()
@@ -161,6 +172,8 @@ def run(
         {
             "crawler_api_token": api_token,
             "crawler_api_url": api_url,
+            "crawler_mode": None,
+            "crawler_sites_file": None,
             "max_urls": max_urls,
             "concurrency": concurrency,
             "retry_hours": retry_hours,
@@ -171,14 +184,18 @@ def run(
             "pick_mode": pick_mode,
             "random_seed": random_seed,
             "target_language": target_language,
+            "gdelt_timespan": None,
+            "gdelt_max_per_call": None,
+            "gdelt_sort": None,
         },
     )
     # Ensure engine can read API key from env if provided in config
-    ensure_siliconflow_env(conf)
+    ensure_openai_env(conf)
 
+    mode = str(conf.get("crawler_mode") or os.getenv("CRAWLER_MODE") or "remote").lower()
     token = conf.get("crawler_api_token") or os.getenv("CRAWLER_API_TOKEN")
-    if not token:
-        typer.secho("Missing CRAWLER_API_TOKEN. Use --api-token or set env.", fg=typer.colors.RED)
+    if mode == "remote" and not token:
+        typer.secho("Missing CRAWLER_API_TOKEN (remote mode). Use --api-token or set env, or switch to local mode.", fg=typer.colors.RED)
         raise typer.Exit(code=2)
 
     run_id = _ts()
@@ -187,6 +204,11 @@ def run(
     cfg = ScrapeConfig(
         api_url=conf.get("crawler_api_url") or DEFAULT_CRAWLER_API_URL,
         api_token=token,
+        mode=mode,
+        sites_file=(conf.get("crawler_sites_file") or os.getenv("CRAWLER_SITES_FILE") or str(Path.cwd() / "server" / "news_website.txt")),
+        gdelt_timespan=(conf.get("gdelt_timespan") or os.getenv("GDELT_TIMESPAN") or "7d"),
+        gdelt_max_per_call=int(conf.get("gdelt_max_per_call") or os.getenv("GDELT_MAX_PER_CALL") or 50),
+        gdelt_sort=(conf.get("gdelt_sort") or os.getenv("GDELT_SORT") or "datedesc"),
         max_urls=int(conf.get("max_urls") or 1),
         concurrency=int(conf.get("concurrency") or 4),
         timeout=int(conf.get("timeout") or 30),
@@ -292,36 +314,43 @@ def doctor(
 
     ok = True
     conf = merge_config(load_config_file(config), load_env())
-    # propagate API key from config to env if needed
-    ensure_siliconflow_env(conf)
+    # propagate API key/base from config to env if needed
+    ensure_openai_env(conf)
 
-    sf_key = os.getenv("SILICONFLOW_API_KEY")
+    oa_key = os.getenv("OPENAI_API_KEY")
+    mode = str(conf.get("crawler_mode") or os.getenv("CRAWLER_MODE") or "remote").lower()
     crawler_token = os.getenv("CRAWLER_API_TOKEN") or str(conf.get("crawler_api_token") or "")
     crawler_url = os.getenv("CRAWLER_API_URL") or str(conf.get("crawler_api_url") or "https://gdelt-xupojkickl.cn-hongkong.fcapp.run")
-    sf_url = os.getenv("SILICONFLOW_URL") or "https://api.siliconflow.cn/v1/chat/completions"
+    # Determine OpenAI-Compatible chat completions URL
+    base = os.getenv("OPENAI_API_BASE") or str(conf.get("openai_api_base") or "https://api.siliconflow.cn/v1")
+    full_url_override = os.getenv("OPENAI_API_URL")
+    chat_url = full_url_override or (base.rstrip("/") + "/chat/completions")
 
-    if not crawler_token:
+    if mode == "remote" and not crawler_token:
         ok = False
-        typer.secho("CRAWLER_API_TOKEN is not set (env or config)", fg=typer.colors.YELLOW)
-    if not sf_key:
+        typer.secho("CRAWLER_API_TOKEN is not set (env or config, remote mode)", fg=typer.colors.YELLOW)
+    if not oa_key:
         ok = False
-        typer.secho("SILICONFLOW_API_KEY is not set (env or config)", fg=typer.colors.YELLOW)
+        typer.secho("OPENAI_API_KEY is not set (env or config)", fg=typer.colors.YELLOW)
 
     # Reachability: any HTTP response (even 4xx/5xx) counts as reachable
-    try:
-        r = requests.get(crawler_url, timeout=5)
-        typer.echo(f"Crawler reachable: {r.status_code}")
-    except Exception as e:
-        ok = False
-        typer.secho(f"Crawler unreachable: {e}", fg=typer.colors.RED)
+    if mode == "remote":
+        try:
+            r = requests.get(crawler_url, timeout=5)
+            typer.echo(f"Crawler reachable: {r.status_code}")
+        except Exception as e:
+            ok = False
+            typer.secho(f"Crawler unreachable: {e}", fg=typer.colors.RED)
+    else:
+        typer.echo("Crawler mode: local (will call GDELT directly at runtime)")
 
     try:
         # Likely 405/404, but network OK means reachable
-        r2 = requests.get(sf_url, timeout=5)
-        typer.echo(f"SiliconFlow reachable: {r2.status_code}")
+        r2 = requests.get(chat_url, timeout=5)
+        typer.echo(f"OpenAI-Compatible chat endpoint reachable: {r2.status_code}")
     except Exception as e:
         ok = False
-        typer.secho(f"SiliconFlow unreachable: {e}", fg=typer.colors.RED)
+        typer.secho(f"OpenAI-Compatible endpoint unreachable: {e}", fg=typer.colors.RED)
 
     # Show export target directory
     try:
@@ -403,3 +432,5 @@ def main() -> None:  # console_scripts entrypoint wrapper
 
 if __name__ == "__main__":
     main()
+
+

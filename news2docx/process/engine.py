@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -17,8 +17,9 @@ from news2docx.infra.logging import (
 )
 
 
-DEFAULT_MODEL_ID = os.environ.get("SILICONFLOW_MODEL", "THUDM/glm-4-9b-chat")
-DEFAULT_SILICONFLOW_URL = "https://api.siliconflow.cn/v1/chat/completions"
+# OpenAI-Compatible defaults
+DEFAULT_MODEL_ID = os.environ.get("OPENAI_MODEL", "THUDM/glm-4-9b-chat")
+DEFAULT_OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", "https://api..cn/v1")
 
 TARGET_WORD_MIN = 400
 TARGET_WORD_MAX = 450
@@ -26,7 +27,7 @@ DEFAULT_CONCURRENCY = int(os.getenv("CONCURRENCY", "4"))
 
 _CACHE_DIR = os.getenv("N2D_CACHE_DIR", ".n2d_cache")
 os.makedirs(_CACHE_DIR, exist_ok=True)
-_SF_MIN_INTERVAL_MS = int(os.getenv("SF_MIN_INTERVAL_MS", "0") or 0)
+_AI_MIN_INTERVAL_MS = int(os.getenv("OPENAI_MIN_INTERVAL_MS", "0") or 0)
 _LAST_CALL_MS = 0
 
 
@@ -93,11 +94,12 @@ def _cache_set(key: str, content: str) -> None:
 
 
 def call_ai_api(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL_ID,
-                api_key: Optional[str] = None, url: str = DEFAULT_SILICONFLOW_URL,
+                api_key: Optional[str] = None, url: Optional[str] = None,
                 max_tokens: Optional[int] = None) -> str:
-    api_key = api_key or os.getenv("SILICONFLOW_API_KEY")
+    # OpenAI-Compatible envs only
+    api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("SILICONFLOW_API_KEY is required")
+        raise RuntimeError("OPENAI_API_KEY is required")
     if max_tokens is None:
         max_tokens = estimate_max_tokens(1)
 
@@ -122,12 +124,16 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL
     for attempt in range(3):
         t0 = time.time()
         try:
-            if _SF_MIN_INTERVAL_MS > 0:
+            if _AI_MIN_INTERVAL_MS > 0:
                 now_ms = int(time.time() * 1000)
-                wait = _SF_MIN_INTERVAL_MS - max(0, now_ms - _LAST_CALL_MS)
+                wait = _AI_MIN_INTERVAL_MS - max(0, now_ms - _LAST_CALL_MS)
                 if wait > 0:
                     time.sleep(wait / 1000.0)
-            resp = requests.post(url, headers=headers, json=body, timeout=120)
+            # Resolve final URL: explicit argument > env override > base + chat path
+            base = os.getenv("OPENAI_API_BASE") or DEFAULT_OPENAI_API_BASE
+            env_full_url = os.getenv("OPENAI_API_URL")
+            final_url = url or env_full_url or (base.rstrip("/") + "/chat/completions")
+            resp = requests.post(final_url, headers=headers, json=body, timeout=120)
             _LAST_CALL_MS = int(time.time() * 1000)
             total_ms = int((time.time() - t0) * 1000)
             if resp.status_code == 200:
@@ -159,7 +165,7 @@ def _split_paras(text: str) -> List[str]:
     parts = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
     if parts:
         return parts
-    return [p.strip() for p in re.split(r"(?<=[.!?。！？])\s+", text) if p.strip()]
+    return [p.strip() for p in re.split(r"(?<=[.!?銆傦紒锛焆)\s+", text) if p.strip()]
 
 
 def ensure_paragraph_parity(translated: str, source: str) -> str:
@@ -175,7 +181,7 @@ def ensure_paragraph_parity(translated: str, source: str) -> str:
     # dst shorter than src: try to split longer dst segments by sentence to match count
     shortage = len(src) - len(dst)
     idx = len(dst) - 1
-    sent_split = re.compile(r"(?<=[。！？!?])\s+")
+    sent_split = re.compile(r"(?<=[銆傦紒锛??])\s+")
     while shortage > 0 and idx >= 0:
         parts = [s for s in sent_split.split(dst[idx]) if s.strip()]
         if len(parts) >= 2:
@@ -298,3 +304,4 @@ def process_articles_two_steps_concurrent(articles: List[Article], target_lang: 
     payload = {"articles": out, "metadata": {"processed": len(out), "failed": errors}}
     log_task_end("engine", "batch", errors == 0, {"elapsed": time.time() - t0})
     return payload
+

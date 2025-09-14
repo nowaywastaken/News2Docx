@@ -7,7 +7,7 @@ import random
 from dataclasses import dataclass, asdict, field
 from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 
 import requests
 import sqlite3
@@ -19,12 +19,18 @@ from news2docx.infra.logging import unified_print, log_task_start, log_task_end,
 
 
 DEFAULT_CRAWLER_API_URL = "https://gdelt-xupojkickl.cn-hongkong.fcapp.run"
+GDELT_BASE = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
 @dataclass
 class ScrapeConfig:
     api_url: str = os.getenv("CRAWLER_API_URL", DEFAULT_CRAWLER_API_URL)
     api_token: Optional[str] = field(default_factory=lambda: os.getenv("CRAWLER_API_TOKEN"))
+    mode: str = field(default_factory=lambda: os.getenv("CRAWLER_MODE", "remote"))  # remote | local
+    sites_file: Optional[str] = field(default_factory=lambda: os.getenv("CRAWLER_SITES_FILE") or os.path.join(os.getcwd(), "server", "news_website.txt"))
+    gdelt_timespan: str = field(default_factory=lambda: os.getenv("GDELT_TIMESPAN", "7d"))
+    gdelt_max_per_call: int = field(default_factory=lambda: int(os.getenv("GDELT_MAX_PER_CALL")) if os.getenv("GDELT_MAX_PER_CALL") else 50)
+    gdelt_sort: str = field(default_factory=lambda: os.getenv("GDELT_SORT", "datedesc"))
     timeout: int = 30
     concurrency: int = 4
     max_urls: int = 1
@@ -178,8 +184,9 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
 
 class NewsScraper:
     def __init__(self, cfg: ScrapeConfig) -> None:
-        if not cfg.api_token:
-            raise ValueError("CRAWLER_API_TOKEN is required")
+        mode = (cfg.mode or "remote").lower()
+        if mode == "remote" and not cfg.api_token:
+            raise ValueError("CRAWLER_API_TOKEN is required in remote mode")
         self.cfg = cfg
         # Ensure DB directory exists
         try:
@@ -240,6 +247,9 @@ class NewsScraper:
         return pool[:maxn]
 
     def _fetch_urls(self) -> List[str]:
+        mode = (self.cfg.mode or "remote").lower()
+        if mode == "local":
+            return self._fetch_urls_local_gdelt()
         headers = {
             "Authorization": f"Bearer {self.cfg.api_token}",
             "Content-Type": "application/json",
@@ -253,6 +263,77 @@ class NewsScraper:
         if not isinstance(urls, list):
             return []
         return [u for u in urls if isinstance(u, str) and u.startswith("http")]
+
+    # -------- Local GDELT mode --------
+    def _gdelt_build_query(self, sites: List[str]) -> str:
+        parts = [f"domainis:{d}" for d in sites if d]
+        return parts[0] if len(parts) == 1 else "(" + " OR ".join(parts) + ")"
+
+    def _gdelt_request(self, query: str) -> dict:
+        params = {
+            "mode": "ArtList",
+            "format": "json",
+            "sort": self.cfg.gdelt_sort,
+            "timespan": self.cfg.gdelt_timespan,
+            "query": query,
+            "maxrecords": int(self.cfg.gdelt_max_per_call),
+        }
+        url = f"{GDELT_BASE}?{urlencode(params)}"
+        try:
+            r = requests.get(url, timeout=self.cfg.timeout, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+            # ensure JSON-ish
+            ct = (r.headers.get("Content-Type") or "").lower()
+            if "json" not in ct:
+                return {}
+            return r.json()
+        except Exception:
+            return {}
+
+    def _gdelt_extract_urls(self, raw_json: dict, lang: str = "eng") -> List[str]:
+        arts = (raw_json or {}).get("articles", []) or []
+        seen, out = set(), []
+        want = (lang or "eng").strip().lower()
+        english_aliases = {"english", "en", "eng"}
+        wanted_set = english_aliases if want in english_aliases else {want}
+        for a in arts:
+            lv = (a.get("language") or "").strip().lower()
+            if lv not in wanted_set:
+                continue
+            u = a.get("url")
+            if u and u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
+
+    def _fetch_urls_local_gdelt(self) -> List[str]:
+        # read sites
+        sites: List[str] = []
+        try:
+            with open(self.cfg.sites_file, "r", encoding="utf-8") as f:
+                for ln in f:
+                    s = (ln or "").strip()
+                    if s and not s.startswith("#"):
+                        sites.append(s)
+        except Exception:
+            pass
+        if not sites:
+            return []
+
+        # batch queries to reduce 'keywords too common'
+        batch_size = 5
+        all_urls: List[str] = []
+        seen = set()
+        for i in range(0, len(sites), batch_size):
+            batch = sites[i:i+batch_size]
+            q = self._gdelt_build_query(batch)
+            data = self._gdelt_request(q)
+            urls = self._gdelt_extract_urls(data, lang="eng")
+            for u in urls:
+                if u not in seen:
+                    seen.add(u)
+                    all_urls.append(u)
+        return all_urls
 
     def _noise_patterns(self) -> List[str]:
         base = [

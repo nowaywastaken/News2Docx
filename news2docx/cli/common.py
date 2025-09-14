@@ -4,14 +4,24 @@ import os
 from pathlib import Path
 
 
-def ensure_siliconflow_env(conf: dict) -> None:
-    """Propagate SiliconFlow API key from config into env if missing."""
-    try:
-        key = conf.get("siliconflow_api_key") if isinstance(conf, dict) else None
-    except Exception:
-        key = None
-    if key and not os.getenv("SILICONFLOW_API_KEY"):
-        os.environ["SILICONFLOW_API_KEY"] = str(key)
+def ensure_openai_env(conf: dict) -> None:
+    """Propagate OpenAI-Compatible settings from config into env.
+
+    - Sets OPENAI_API_KEY
+    - Sets OPENAI_API_BASE if provided in config
+    """
+    if not isinstance(conf, dict):
+        return
+
+    # Unified keys
+    key = conf.get("openai_api_key")
+    base = conf.get("openai_api_base")
+
+    if key and not os.getenv("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = str(key)
+
+    if base and not os.getenv("OPENAI_API_BASE"):
+        os.environ["OPENAI_API_BASE"] = str(base)
 
 
 def desktop_outdir() -> Path:
@@ -23,4 +33,3 @@ def desktop_outdir() -> Path:
     outdir = desktop / folder_name
     outdir.mkdir(parents=True, exist_ok=True)
     return outdir
-
