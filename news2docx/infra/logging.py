@@ -1,38 +1,296 @@
-"""Package-local unified logging utilities.
+"""Log4j-aligned logging utilities for the project.
 
-Provides a consistent API without depending on a root-level module.
+This module provides a centralized, Log4j-like logging system for Python:
+
+- Hierarchical loggers (e.g. ``news2docx.engine.batch``)
+- Multiple appenders: console and optional rolling file
+- Pattern layout or JSON layout
+- Levels aligned with Log4j, including ``TRACE`` (custom) and ``FATAL`` (alias of CRITICAL)
+- MDC (Mapped Diagnostic Context) support via ``contextvars``
+
+Configuration via environment variables (prefix: N2D_):
+- ``N2D_LOG_LEVEL``: TRACE, DEBUG, INFO, WARN, ERROR, FATAL (default: INFO)
+- ``N2D_LOG_JSON``: 1 to enable JSON layout (default: 0)
+- ``N2D_LOG_FILE``: path to a log file to enable file appender (default: logs/news2docx.log)
+- ``N2D_LOG_DIR``: when set, used as directory for default log file
+- ``N2D_LOG_ROTATE``: size|time (default: size)
+- ``N2D_LOG_MAX_BYTES``: for size rotation (default: 10485760 i.e. 10MB)
+- ``N2D_LOG_BACKUP``: backup count for rotation (default: 5)
+- ``N2D_LOG_WHEN``: for time rotation (default: midnight)
+- ``N2D_LOG_INTERVAL``: for time rotation interval (default: 1)
+
+The helpers below keep backward compatibility for existing call sites
+like ``unified_print`` and ``log_task_*``.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import logging.config
+import os
+import sys
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from typing import Any, Dict, Optional
 
+import contextvars
+
+# ---------------- Levels: add TRACE, FATAL alias ----------------
+
+TRACE_LEVEL = 5
+if not hasattr(logging, "TRACE"):
+    logging.addLevelName(TRACE_LEVEL, "TRACE")
+
+def _trace(self: logging.Logger, msg: str, *args: Any, **kwargs: Any) -> None:
+    if self.isEnabledFor(TRACE_LEVEL):
+        self._log(TRACE_LEVEL, msg, args, **kwargs)
+
+if not hasattr(logging.Logger, "trace"):
+    logging.Logger.trace = _trace  # type: ignore[attr-defined]
+
+# Provide FATAL as alias to CRITICAL for familiarity
+if not hasattr(logging, "FATAL"):
+    logging.FATAL = logging.CRITICAL  # type: ignore[attr-defined]
+
+
+# ---------------- MDC (Mapped Diagnostic Context) ----------------
+
+_MDC: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("MDC", default={})
+
+def mdc_put(key: str, value: Any) -> None:
+    d = dict(_MDC.get())
+    d[key] = value
+    _MDC.set(d)
+
+def mdc_get(key: str, default: Any = None) -> Any:
+    return _MDC.get().get(key, default)
+
+def mdc_remove(key: str) -> None:
+    d = dict(_MDC.get())
+    d.pop(key, None)
+    _MDC.set(d)
+
+def mdc_clear() -> None:
+    _MDC.set({})
+
+def mdc_copy() -> Dict[str, Any]:
+    return dict(_MDC.get())
+
+
+class MDCFilter(logging.Filter):
+    """Inject MDC into LogRecord as dict and compact string."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # always True
+        d = _MDC.get()
+        # Attach as dict
+        setattr(record, "mdc", d)
+        # And compact pair string
+        if d:
+            parts = []
+            for k, v in d.items():
+                try:
+                    parts.append(f"{k}={v}")
+                except Exception:
+                    parts.append(f"{k}=<err>")
+            mdc_str = " ".join(parts)
+            setattr(record, "mdc_str", mdc_str)
+            setattr(record, "mdc_suffix", f" | MDC: {mdc_str}")
+        else:
+            setattr(record, "mdc_str", "")
+            setattr(record, "mdc_suffix", "")
+        return True
+
+
+# ---------------- Formatters ----------------
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: Dict[str, Any] = {
+            "timestamp": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        # Attach MDC if present
+        mdc = getattr(record, "mdc", None)
+        if isinstance(mdc, dict) and mdc:
+            payload["mdc"] = mdc
+        # Exception info
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+# ---------------- Utilities ----------------
+
+_CONFIGURED = False
 _CACHE: Dict[str, logging.Logger] = {}
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+def _level_from_env(name: str, default: str = "INFO") -> int:
+    s = str(os.getenv(name, default)).strip().upper()
+    aliases = {"WARN": "WARNING", "FATAL": "CRITICAL"}
+    s = aliases.get(s, s)
+    if s == "TRACE":
+        return TRACE_LEVEL
+    return getattr(logging, s, logging.INFO)
+
+def _default_log_file() -> str:
+    directory = os.getenv("N2D_LOG_DIR") or os.path.join(os.getcwd(), "logs")
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except Exception:
+        pass
+    return os.getenv("N2D_LOG_FILE") or os.path.join(directory, "news2docx.log")
+
+
+def build_logging_config() -> Dict[str, Any]:
+    """Build a dictConfig resembling Log4j concepts (appenders/layouts)."""
+    json_layout = _env_bool("N2D_LOG_JSON", False)
+    level = _level_from_env("N2D_LOG_LEVEL", "INFO")
+    rotate = (os.getenv("N2D_LOG_ROTATE") or "size").strip().lower()
+    max_bytes = int(os.getenv("N2D_LOG_MAX_BYTES") or 10 * 1024 * 1024)
+    backup = int(os.getenv("N2D_LOG_BACKUP") or 5)
+    when = os.getenv("N2D_LOG_WHEN") or "midnight"
+    interval = int(os.getenv("N2D_LOG_INTERVAL") or 1)
+    log_file = _default_log_file()
+
+    fmt = "[%(asctime)s][%(levelname)s][%(name)s] %(message)s%(mdc_suffix)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+
+    formatters: Dict[str, Any] = {
+        "pattern": {
+            "()": logging.Formatter,
+            "format": fmt,
+            "datefmt": datefmt,
+        },
+        "json": {
+            "()": JSONFormatter,
+        },
+    }
+
+    console_formatter = "json" if json_layout else "pattern"
+    file_formatter = "json" if json_layout else "pattern"
+
+    handlers: Dict[str, Any] = {
+        "console": {
+            "class": "logging.StreamHandler",
+            "level": level,
+            "formatter": console_formatter,
+            "filters": ["mdc"],
+            "stream": "ext://sys.stderr",
+        }
+    }
+
+    # File appender (rolling)
+    if rotate == "time":
+        handlers["file"] = {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "level": level,
+            "formatter": file_formatter,
+            "filters": ["mdc"],
+            "filename": log_file,
+            "when": when,
+            "interval": interval,
+            "backupCount": backup,
+            "encoding": "utf-8",
+        }
+    else:
+        handlers["file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": level,
+            "formatter": file_formatter,
+            "filters": ["mdc"],
+            "filename": log_file,
+            "maxBytes": max_bytes,
+            "backupCount": backup,
+            "encoding": "utf-8",
+        }
+
+    config: Dict[str, Any] = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "filters": {
+            "mdc": {
+                "()": MDCFilter,
+            }
+        },
+        "formatters": formatters,
+        "handlers": handlers,
+        "root": {
+            "level": level,
+            "handlers": ["console", "file"],
+        },
+        # Named loggers inherit root config; examples for fine-grained control:
+        # "loggers": { "news2docx": {"level": level, "handlers": ["console", "file"], "propagate": False} }
+    }
+    return config
+
+
+def init_logging(force: bool = False) -> None:
+    """Initialize global logging using dictConfig.
+
+    Safe to call multiple times; no-op if already configured unless ``force``.
+    """
+    global _CONFIGURED
+    if _CONFIGURED and not force:
+        return
+    # Ensure TRACE is recognized by the root logger
+    logging.getLogger("").setLevel(_level_from_env("N2D_LOG_LEVEL", "INFO"))
+    logging.config.dictConfig(build_logging_config())
+    _CONFIGURED = True
+
+
+def _ensure_logging():
+    global _CONFIGURED
+    if not _CONFIGURED and not logging.getLogger("").handlers:
+        try:
+            init_logging()
+        except Exception:
+            # Fallback: very basic setup to avoid silent logs
+            logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+            _CONFIGURED = True
 
 
 def get_unified_logger(program: str, task_type: str) -> logging.Logger:
-    name = f"{program}.{task_type}"
+    """Return a hierarchical logger like ``news2docx.<program>.<task_type>``.
+
+    Handlers are managed at the root; this function ensures logging is initialized.
+    """
+    _ensure_logging()
+    name = f"news2docx.{program}.{task_type}".strip(".")
     if name in _CACHE:
         return _CACHE[name]
     logger = logging.getLogger(name)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter("[%(asctime)s][%(name)s][%(levelname)s] %(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
     _CACHE[name] = logger
     return logger
 
 
 def unified_print(message: str, program: str, task_type: str, level: str = "info") -> None:
+    """Console echo + logger write, preserving existing behavior.
+
+    Level accepts TRACE/DEBUG/INFO/WARNING/ERROR/FATAL (case-insensitive).
+    """
     logger = get_unified_logger(program, task_type)
     formatted = f"[{program}][{task_type}] {message}"
-    print(formatted)
-    log_fn = getattr(logger, level.lower(), logger.info)
-    log_fn(message)
+    # Always echo to console for CLI UX
+    try:
+        print(formatted)
+    except Exception:
+        pass
+    lvl = str(level or "info").strip().lower()
+    if lvl == "trace":
+        logger.trace(message)  # type: ignore[attr-defined]
+    elif lvl in {"fatal", "critical"}:
+        logger.critical(message)
+    else:
+        log_fn = getattr(logger, lvl, logger.info)
+        log_fn(message)
 
 
 def log_task_start(program: str, task_type: str, details: Optional[Dict[str, Any]] = None) -> None:
@@ -59,9 +317,9 @@ def log_processing_step(program: str, task_type: str, message: str, details: Opt
 def log_error(program: str, task_type: str, error: Exception, context: str = "") -> None:
     logger = get_unified_logger(program, task_type)
     if context:
-        logger.error("%s | %s", context, error)
+        logger.error("%s | %s", context, error, exc_info=isinstance(error, Exception))
     else:
-        logger.error("%s", error)
+        logger.error("%s", error, exc_info=isinstance(error, Exception))
 
 
 def log_performance(program: str, task_type: str, metric: str, value: Any, details: Optional[Dict[str, Any]] = None) -> None:
@@ -192,6 +450,13 @@ def log_batch_processing(
     logger.info("[BATCH] %s", json.dumps(payload, ensure_ascii=False))
 
 __all__ = [
+    "init_logging",
+    "build_logging_config",
+    "mdc_put",
+    "mdc_get",
+    "mdc_remove",
+    "mdc_clear",
+    "mdc_copy",
     "get_unified_logger",
     "unified_print",
     "log_task_start",

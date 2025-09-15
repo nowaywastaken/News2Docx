@@ -4,8 +4,8 @@
 # crawler_mode: remote | local（默认：remote）
 crawler_mode: remote
 # 当 mode=remote 时
-crawler_api_url: "https://gdelt-xupojkickl.cn-hongkong.fcapp.run"
-crawler_api_token: "token-7eiac9018c346ge9c93ef25266ai"
+crawler_api_url: "PUT_YOUR_CRAWLER_API_URL_HERE"
+crawler_api_token: "PUT_YOUR_CRAWLER_API_TOKEN_HERE"
 # 当 mode=local 时（直接访问 GDELT；中国大陆可能被屏蔽）
 crawler_sites_file: server/news_website.txt
 # 可选 GDELT 参数（本地模式）
@@ -14,8 +14,8 @@ crawler_sites_file: server/news_website.txt
 # gdelt_sort: datedesc         # datedesc | dateasc（按日期降序/升序）
 
 # LLM（兼容 OpenAI 接口）
-openai_api_base: "https://api.siliconflow.cn/v1"
-openai_api_key: "sk-ujkafmtqgdyolneutidrcffkpkjizkqonhyjoyhvfhulkvct"
+openai_api_base: "PUT_YOUR_OPENAI_COMPATIBLE_API_BASE_URL_HERE"
+openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
 
 # 抓取
 max_urls: 3

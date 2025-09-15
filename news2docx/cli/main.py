@@ -23,9 +23,13 @@ from news2docx.services.processing import (
     process_articles as svc_process_articles,
 )
 from news2docx.services.runs import runs_base_dir, latest_run_dir, clean_runs as svc_clean_runs
+from news2docx.infra.logging import init_logging
 
 
 app = typer.Typer(help="News2Docx CLI: scrape, process, run, export")
+
+# Initialize logging early so all modules inherit the configuration
+init_logging()
 
 
 def _ts() -> str:
