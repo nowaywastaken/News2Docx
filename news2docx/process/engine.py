@@ -13,13 +13,28 @@ import requests
 
 from news2docx.core.utils import now_stamp
 from news2docx.infra.logging import (
-    log_task_start, log_task_end, log_processing_step, log_processing_result, log_api_call
+    log_task_start, log_task_end, log_processing_step, log_processing_result, log_api_call, log_error
 )
 
 
-# OpenAI-Compatible defaults
-DEFAULT_MODEL_ID = os.environ.get("OPENAI_MODEL", "THUDM/glm-4-9b-chat")
-DEFAULT_OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", "https://api..cn/v1")
+# OpenAI-Compatible configuration: no hardcoded model name
+def _load_model_and_base_from_config() -> Tuple[Optional[str], Optional[str]]:
+    """Load `openai_model` and `openai_api_base` from root config.yml if present.
+
+    No defaults here; caller decides fallback/validation strategy.
+    """
+    try:
+        from pathlib import Path
+        import yaml  # type: ignore
+        p = Path.cwd() / "config.yml"
+        if not p.exists():
+            return None, None
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            return None, None
+        return data.get("openai_model"), data.get("openai_api_base")
+    except Exception:
+        return None, None
 
 TARGET_WORD_MIN = 400
 TARGET_WORD_MAX = 450
@@ -60,11 +75,12 @@ def _maybe_load_template(path_env: str, default_text: str) -> str:
 
 
 TRANSLATION_SYSTEM_PROMPT = """You are a professional {{to}} translator.
-Rules:
-- Output only the translation text, no extra words
-- Keep exact paragraph count as input; use %% as separator for multi-paragraph input
+STRICT RULES:
+- Output ONLY the clean body text, nothing else.
+- DO NOT output notes, remarks, timestamps, media names, sources, authors, copyright, image captions, ads, disclaimers, or titles.
+- Keep EXACT paragraph count as input; use %% as separator for multi-paragraph input.
 """
-TRANSLATION_USER_PROMPT = "Translate to {{to}}:\n\n{{text}}"
+TRANSLATION_USER_PROMPT = "Translate to {{to}}. Output clean body only. Do not add any notes or metadata.\n\n{{text}}"
 
 
 def build_translation_prompts(text: str, target_lang: str = "Chinese") -> Tuple[str, str]:
@@ -73,6 +89,70 @@ def build_translation_prompts(text: str, target_lang: str = "Chinese") -> Tuple[
     system_prompt = sys_tpl.replace("{{to}}", target_lang)
     user_prompt = usr_tpl.replace("{{to}}", target_lang).replace("{{text}}", text)
     return system_prompt, user_prompt
+
+
+def _load_cleaning_config() -> Dict[str, Any]:
+    from pathlib import Path
+    try:
+        import yaml  # type: ignore
+        p = Path.cwd() / "config.yml"
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {}
+        if not isinstance(data, dict):
+            return {}
+        out: Dict[str, Any] = {}
+        out["prefixes"] = list(data.get("processing_forbidden_prefixes") or [])
+        out["patterns"] = list(data.get("processing_forbidden_patterns") or [])
+        out["min_words"] = int(data.get("processing_min_words_after_clean") or 200)
+        return out
+    except Exception:
+        return {"prefixes": [], "patterns": [], "min_words": 200}
+
+
+def _sanitize_meta(text: str, prefixes: List[str], patterns: List[str]) -> Tuple[str, int, List[str]]:
+    """Remove metadata lines and patterns from text; returns (clean_text, removed_count, removed_kinds)."""
+    removed = 0
+    kinds: List[str] = []
+    if not text:
+        return "", 0, []
+    lines = [ln for ln in (text.splitlines())]
+    out_lines: List[str] = []
+    # Prefix-based removal
+    lower_prefixes = [str(p).strip() for p in (prefixes or []) if str(p).strip()]
+    for ln in lines:
+        s = ln.strip()
+        hit = False
+        for pref in lower_prefixes:
+            try:
+                if s.startswith(pref):
+                    removed += 1
+                    kinds.append(f"prefix:{pref}")
+                    hit = True
+                    break
+            except Exception:
+                continue
+        if not hit:
+            out_lines.append(ln)
+    # Pattern-based removal
+    if patterns:
+        import re
+        tmp_lines: List[str] = []
+        for ln in out_lines:
+            s = ln.strip()
+            matched = False
+            for pat in patterns:
+                try:
+                    if re.match(pat, s):
+                        removed += 1
+                        kinds.append(f"pattern:{pat}")
+                        matched = True
+                        break
+                except Exception:
+                    continue
+            if not matched:
+                tmp_lines.append(ln)
+        out_lines = tmp_lines
+    cleaned = "\n".join([l for l in out_lines]).strip()
+    return cleaned, removed, kinds
 
 
 def _cache_get(key: str) -> Optional[str]:
@@ -93,13 +173,19 @@ def _cache_set(key: str, content: str) -> None:
         pass
 
 
-def call_ai_api(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL_ID,
+def call_ai_api(system_prompt: str, user_prompt: str, model: Optional[str] = None,
                 api_key: Optional[str] = None, url: Optional[str] = None,
                 max_tokens: Optional[int] = None) -> str:
     # OpenAI-Compatible envs only
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required")
+    # Resolve model from config if not provided
+    if model is None:
+        m, _b = _load_model_and_base_from_config()
+        model = m
+    if not model:
+        raise RuntimeError("openai_model is required in config.yml (no backend default)")
     if max_tokens is None:
         max_tokens = estimate_max_tokens(1)
 
@@ -129,10 +215,24 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL
                 wait = _AI_MIN_INTERVAL_MS - max(0, now_ms - _LAST_CALL_MS)
                 if wait > 0:
                     time.sleep(wait / 1000.0)
-            # Resolve final URL: explicit argument > env override > base + chat path
-            base = os.getenv("OPENAI_API_BASE") or DEFAULT_OPENAI_API_BASE
-            env_full_url = os.getenv("OPENAI_API_URL")
-            final_url = url or env_full_url or (base.rstrip("/") + "/chat/completions")
+            # Resolve final URL: explicit argument > env override > base from config
+            base_env = os.getenv("OPENAI_API_BASE")
+            base_cfg = _load_model_and_base_from_config()[1]
+            base = (base_env or base_cfg or "").strip()
+            if not base:
+                raise RuntimeError("缺少 OPENAI_API_BASE（或 config.yml: openai_api_base）")
+            env_full_url = (os.getenv("OPENAI_API_URL") or "").strip()
+            if url:
+                final_url = url
+            elif env_full_url:
+                final_url = env_full_url
+            else:
+                b = base.rstrip("/")
+                # Be tolerant: if base already points to chat endpoint, do not append again
+                if b.lower().endswith("/chat/completions"):
+                    final_url = b
+                else:
+                    final_url = b + "/chat/completions"
             resp = requests.post(final_url, headers=headers, json=body, timeout=120)
             _LAST_CALL_MS = int(time.time() * 1000)
             total_ms = int((time.time() - t0) * 1000)
@@ -147,7 +247,15 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: str = DEFAULT_MODEL
                     continue
                 raise RuntimeError(f"provider error {resp.status_code}")
             else:
-                raise RuntimeError(f"api error {resp.status_code}")
+                # Provide actionable guidance
+                msg = f"api error {resp.status_code} | url={final_url}"
+                if resp.status_code == 401:
+                    msg += " | 请检查 OPENAI_API_KEY 是否正确/有权限"
+                elif resp.status_code == 404:
+                    msg += " | 常见原因：openai_api_base 配置为根URL或完整URL不一致；若 base 已含 /chat/completions 则不要重复拼接；也可能是供应商路径不同"
+                elif resp.status_code == 403:
+                    msg += " | 可能无权访问该模型，请检查模型ID与账号权限"
+                raise RuntimeError(msg)
         except requests.RequestException as e:
             if attempt < 2:
                 time.sleep(1.2 * (attempt + 1))
@@ -202,16 +310,22 @@ def _count_words(text: str) -> int:
 def _adjust_word_count(text: str, min_w: int = TARGET_WORD_MIN, max_w: int = TARGET_WORD_MAX, max_attempts: int = 3) -> Tuple[str, int]:
     wc = _count_words(text)
     if min_w <= wc <= max_w:
-        return text, wc
+        cfg = _load_cleaning_config()
+        cleaned, _rm, _k = _sanitize_meta(text, cfg.get("prefixes", []), cfg.get("patterns", []))
+        return (cleaned or text), _count_words(cleaned or text)
     for attempt in range(max_attempts):
         target = f"{min_w}-{max_w}"
         instruction = (
             f"Adjust the word count to {target}. Keep style and meaning. "
-            f"Segment into clear paragraphs."
+            f"Output ONLY clean English body text; DO NOT include notes, timestamps, media names, sources, authors, copyright, images, ads, disclaimers, or titles. "
+            f"Split paragraphs clearly; use %% to separate if needed."
         )
-        sys_p = "You are a professional news editor."
+        sys_p = "You are a professional news editor. Output strictly the clean body only."
         usr_p = instruction + "\n\n" + text
         adjusted = call_ai_api(sys_p, usr_p, max_tokens=estimate_max_tokens(1))
+        cfg = _load_cleaning_config()
+        adjusted_clean, _rm, _k = _sanitize_meta(adjusted, cfg.get("prefixes", []), cfg.get("patterns", []))
+        adjusted = adjusted_clean or adjusted
         wc = _count_words(adjusted)
         if min_w <= wc <= max_w:
             return adjusted, wc
@@ -261,15 +375,25 @@ def process_article(article: Article, target_lang: str = "Chinese", merge_short_
     log_processing_step("engine", "article", f"processing article {article.index}")
 
     # Step 1: word adjust
-    adjusted, final_wc = _adjust_word_count(article.content)
+    adjusted_raw, final_wc = _adjust_word_count(article.content)
+    cfg_clean = _load_cleaning_config()
+    adjusted, rm1, kinds1 = _sanitize_meta(adjusted_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", []))
+    if not adjusted:
+        adjusted = adjusted_raw
     # Merge short English paragraphs to reduce excessive breaks
     adjusted = _merge_short_paragraphs_text(adjusted, max_chars=int(merge_short_chars or 80))
     # Step 2: translation
     sys_p, usr_p = build_translation_prompts(adjusted, target_lang)
-    translated = call_ai_api(sys_p, usr_p)
-    translated = ensure_paragraph_parity(translated, adjusted)
+    translated_raw = call_ai_api(sys_p, usr_p)
+    translated_raw = ensure_paragraph_parity(translated_raw, adjusted)
+    translated, rm2, kinds2 = _sanitize_meta(translated_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", []))
+    if not translated:
+        translated = translated_raw
     # Title translation
     translated_title = _translate_title(article.title, target_lang)
+
+    if _count_words(adjusted) < int(cfg_clean.get("min_words", 200)):
+        adjusted = adjusted_raw
 
     res = {
         "id": str(article.index),
@@ -283,6 +407,9 @@ def process_article(article: Article, target_lang: str = "Chinese", merge_short_
         "processing_timestamp": now_stamp(),
         "url": article.url,
         "success": True,
+        "clean_removed_en": int(rm1),
+        "clean_removed_zh": int(rm2),
+        "clean_removed_kinds": list(set(kinds1 + kinds2)),
     }
     log_processing_result("engine", "article", "ok", article.to_dict(), res, "success", {"elapsed": time.time() - start})
     return res
@@ -294,13 +421,32 @@ def process_articles_two_steps_concurrent(articles: List[Article], target_lang: 
     out: List[Dict[str, Any]] = []
     errors = 0
     with ThreadPoolExecutor(max_workers=max(1, DEFAULT_CONCURRENCY)) as ex:
-        futs = [ex.submit(process_article, a, target_lang, merge_short_chars) for a in articles]
-        for fut in as_completed(futs):
+        fut_to_article = {ex.submit(process_article, a, target_lang, merge_short_chars): a for a in articles}
+        for fut in as_completed(fut_to_article):
+            a = fut_to_article[fut]
             try:
                 out.append(fut.result())
             except Exception as e:
+                # Log a clear error for visibility in UI/terminal
+                try:
+                    log_error("engine", "article", e, context=f"article {a.index} AI processing failed")
+                except Exception:
+                    pass
                 errors += 1
-                out.append({"success": False, "error": str(e)})
+                # Fallback: keep original article content so export is not empty
+                out.append({
+                    "id": str(a.index),
+                    "original_title": a.title,
+                    "translated_title": a.title,
+                    "original_content": a.content,
+                    "adjusted_content": a.content,
+                    "translated_content": "",
+                    "target_language": target_lang,
+                    "processing_timestamp": now_stamp(),
+                    "url": a.url,
+                    "success": False,
+                    "error": str(e),
+                })
     payload = {"articles": out, "metadata": {"processed": len(out), "failed": errors}}
     log_task_end("engine", "batch", errors == 0, {"elapsed": time.time() - t0})
     return payload

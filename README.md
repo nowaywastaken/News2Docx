@@ -70,6 +70,41 @@ python -m news2docx.cli.main process scraped_news_20240101_120000.json --config 
 python -m news2docx.cli.main export --config config.yml --split/--no-split
 ```
 
+## UI（PyQt）
+
+- 启动：`python index.py`（无需参数，自动读取根目录 `config.yml`）
+- 窗口：固定 `350x600`，启用高 DPI；仅使用 Absolute Positioning、`QFormLayout`、`QStackedLayout`
+- 页面：
+  - 主页：应用信息 + 实时日志（根目录 `log.txt`）
+  - 设置：关键配置只读展示（抓取/处理/导出）
+- 操作按钮：一键运行、抓取、处理、导出；日志同时输出到终端与 `log.txt`
+
+函数说明（index.py）：
+- `load_app_config(config_path)`：加载配置（严格读取指定路径）。
+- `prepare_logging(log_file)`：初始化日志到单一文件并同步输出到控制台。
+- `run_scrape(conf)`：执行抓取，保存 `scraped_news_*.json`。
+- `run_process(conf, scraped_json_path)`：两步处理，写入 `runs/<id>/processed.json`。
+- `run_export(conf, processed_json_path)`：按配置导出 DOCX（单文件或分篇）。
+- `run_app()`：高 DPI 初始化、加载配置与日志、启动主窗口。
+
+UI 相关配置示例：
+
+```yaml
+app:
+  name: "News2Docx UI"
+ui:
+  fixed_width: 350
+  fixed_height: 600
+  high_dpi: true
+  initial_page: 0
+  theme:
+    primary_color: "#4C7DFF"
+    background_color: "#F7F9FC"
+    text_color: "#1F2937"
+    accent_color: "#10B981"
+    danger_color: "#EF4444"
+```
+
 ## CLI
 
 ```bash
@@ -90,6 +125,10 @@ python -m news2docx.cli.main --help
 - 抓取：`crawler_mode`（remote|local）、`crawler_api_url`、`crawler_api_token`、`max_urls`、`concurrency`、`retry_hours`、`timeout`、`pick_mode`、`random_seed`、`db_path`、`noise_patterns`
 - 处理：`openai_api_base`、`openai_api_key`、`target_language`、`merge_short_paragraph_chars`
 - 导出：`run_export`、`export_split`、`export_order`（`zh-en`|`en-zh`）、`export_mono`、`export_out_dir`、`export_first_line_indent_cm`、`export_font_*`、`export_title_bold`、`export_title_size_multiplier`
+ - 处理净化：
+   - `processing_forbidden_prefixes`：按行前缀丢弃（如 `Note:`、媒体名、广告提示等）
+   - `processing_forbidden_patterns`：按正则丢弃（如日期时间戳/媒体尾注）
+   - `processing_min_words_after_clean`：清理后英文最小词数（过低则回退清理前结果）
 
 示例（节选）：
 
