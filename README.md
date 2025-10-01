@@ -125,10 +125,15 @@ python -m news2docx.cli.main --help
 - 抓取：`crawler_mode`（remote|local）、`crawler_api_url`、`crawler_api_token`、`max_urls`、`concurrency`、`retry_hours`、`timeout`、`pick_mode`、`random_seed`、`db_path`、`noise_patterns`
 - 处理：`openai_api_base`、`openai_api_key`、`target_language`、`merge_short_paragraph_chars`
 - 导出：`run_export`、`export_split`、`export_order`（`zh-en`|`en-zh`）、`export_mono`、`export_out_dir`、`export_first_line_indent_cm`、`export_font_*`、`export_title_bold`、`export_title_size_multiplier`
- - 处理净化：
-   - `processing_forbidden_prefixes`：按行前缀丢弃（如 `Note:`、媒体名、广告提示等）
-   - `processing_forbidden_patterns`：按正则丢弃（如日期时间戳/媒体尾注）
-   - `processing_min_words_after_clean`：清理后英文最小词数（过低则回退清理前结果）
+- 处理净化：
+  - `processing_forbidden_prefixes`：按行前缀丢弃（如 `Note:`、媒体名、广告提示等）
+  - `processing_forbidden_patterns`：按正则丢弃（如日期时间戳/媒体尾注）
+  - `processing_min_words_after_clean`：清理后英文最小词数（过低则回退清理前结果）
+ - 处理提示词（Prompt，可完全自定义；支持占位符）：
+   - `processing_prompts.translation_system`（`{{to}}`/`{{text}}`）
+   - `processing_prompts.translation_user`（`{{to}}`/`{{text}}`）
+   - `processing_prompts.adjust_system`（`{{target}}`/`{{text}}`）
+   - `processing_prompts.adjust_user`（`{{target}}`/`{{text}}`）
 
 示例（节选）：
 

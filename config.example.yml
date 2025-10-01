@@ -93,3 +93,26 @@ processing_forbidden_patterns:
   - '(?i)^\s*(By|作者)\s*:.*$'
   - '(?i)^\s*(Source|来源)\s*:.*$'
 processing_min_words_after_clean: 200
+
+processing_prompts:
+  # 占位符：
+  #  - 翻译：{{to}} / {{text}}
+  #  - 调整：{{target}}（如 400-450）/ {{text}}
+  translation_system: |
+    You are a professional {{to}} translator.
+    STRICT RULES:
+    - Output ONLY the clean body text, nothing else.
+    - DO NOT output notes, remarks, timestamps, media names, sources, authors, copyright, image captions, ads, disclaimers, or titles.
+    - Keep EXACT paragraph count as input; use %% as separator for multi-paragraph input.
+  translation_user: |
+    Translate to {{to}}. Output clean body only. Do not add any notes or metadata.
+    
+    {{text}}
+  adjust_system: |
+    You are a professional news editor. Output strictly the clean body only.
+  adjust_user: |
+    Adjust the word count to {{target}}. Keep style and meaning.
+    Output ONLY clean English body text; DO NOT include notes, timestamps, media names, sources, authors, copyright, images, ads, disclaimers, or titles.
+    Split paragraphs clearly; use %% to separate if needed.
+    
+    {{text}}

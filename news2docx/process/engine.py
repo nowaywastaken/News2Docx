@@ -84,8 +84,21 @@ TRANSLATION_USER_PROMPT = "Translate to {{to}}. Output clean body only. Do not a
 
 
 def build_translation_prompts(text: str, target_lang: str = "Chinese") -> Tuple[str, str]:
-    sys_tpl = _maybe_load_template("TRANSLATION_SYSTEM_PROMPT_FILE", TRANSLATION_SYSTEM_PROMPT)
-    usr_tpl = _maybe_load_template("TRANSLATION_USER_PROMPT_FILE", TRANSLATION_USER_PROMPT)
+    # Allow override from config.yml
+    try:
+        import yaml  # type: ignore
+        from pathlib import Path
+        p = Path.cwd() / "config.yml"
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else None
+        prompts = (data or {}).get("processing_prompts") if isinstance(data, dict) else None
+        sys_override = (prompts or {}).get("translation_system") if isinstance(prompts, dict) else None
+        usr_override = (prompts or {}).get("translation_user") if isinstance(prompts, dict) else None
+    except Exception:
+        sys_override = None
+        usr_override = None
+
+    sys_tpl = (sys_override or _maybe_load_template("TRANSLATION_SYSTEM_PROMPT_FILE", TRANSLATION_SYSTEM_PROMPT))
+    usr_tpl = (usr_override or _maybe_load_template("TRANSLATION_USER_PROMPT_FILE", TRANSLATION_USER_PROMPT))
     system_prompt = sys_tpl.replace("{{to}}", target_lang)
     user_prompt = usr_tpl.replace("{{to}}", target_lang).replace("{{text}}", text)
     return system_prompt, user_prompt
@@ -315,13 +328,38 @@ def _adjust_word_count(text: str, min_w: int = TARGET_WORD_MIN, max_w: int = TAR
         return (cleaned or text), _count_words(cleaned or text)
     for attempt in range(max_attempts):
         target = f"{min_w}-{max_w}"
-        instruction = (
-            f"Adjust the word count to {target}. Keep style and meaning. "
-            f"Output ONLY clean English body text; DO NOT include notes, timestamps, media names, sources, authors, copyright, images, ads, disclaimers, or titles. "
-            f"Split paragraphs clearly; use %% to separate if needed."
-        )
-        sys_p = "You are a professional news editor. Output strictly the clean body only."
-        usr_p = instruction + "\n\n" + text
+        # Load prompts from config when available
+        try:
+            import yaml  # type: ignore
+            from pathlib import Path
+            p = Path.cwd() / "config.yml"
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else None
+            prompts = (data or {}).get("processing_prompts") if isinstance(data, dict) else None
+            sys_override = (prompts or {}).get("adjust_system") if isinstance(prompts, dict) else None
+            usr_override = (prompts or {}).get("adjust_user") if isinstance(prompts, dict) else None
+        except Exception:
+            sys_override = None
+            usr_override = None
+
+        if sys_override or usr_override:
+            sys_p = (sys_override or "").replace("{{target}}", target)
+            usr_p = (usr_override or "").replace("{{target}}", target).replace("{{text}}", text)
+            if not sys_p.strip():
+                sys_p = "You are a professional news editor. Output strictly the clean body only."
+            if not usr_p.strip():
+                usr_p = (
+                    f"Adjust the word count to {target}. Keep style and meaning. "
+                    f"Output ONLY clean English body text; DO NOT include notes, timestamps, media names, sources, authors, copyright, images, ads, disclaimers, or titles. "
+                    f"Split paragraphs clearly; use %% to separate if needed.\n\n{text}"
+                )
+        else:
+            instruction = (
+                f"Adjust the word count to {target}. Keep style and meaning. "
+                f"Output ONLY clean English body text; DO NOT include notes, timestamps, media names, sources, authors, copyright, images, ads, disclaimers, or titles. "
+                f"Split paragraphs clearly; use %% to separate if needed."
+            )
+            sys_p = "You are a professional news editor. Output strictly the clean body only."
+            usr_p = instruction + "\n\n" + text
         adjusted = call_ai_api(sys_p, usr_p, max_tokens=estimate_max_tokens(1))
         cfg = _load_cleaning_config()
         adjusted_clean, _rm, _k = _sanitize_meta(adjusted, cfg.get("prefixes", []), cfg.get("patterns", []))
