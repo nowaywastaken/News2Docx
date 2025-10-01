@@ -1,3 +1,18 @@
+app:
+  name: "News2Docx UI"
+
+ui:
+  fixed_width: 350
+  fixed_height: 600
+  high_dpi: true
+  initial_page: 0
+  theme:
+    primary_color: "#4C7DFF"
+    background_color: "#F7F9FC"
+    text_color: "#1F2937"
+    accent_color: "#10B981"
+    danger_color: "#EF4444"
+
 # News2Docx 示例配置（复制为 config.yml 后编辑）
 
 # 爬虫
@@ -16,6 +31,7 @@ crawler_sites_file: server/news_website.txt
 # LLM（兼容 OpenAI 接口）
 openai_api_base: "PUT_YOUR_OPENAI_COMPATIBLE_API_BASE_URL_HERE"
 openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
+openai_model: "PUT_YOUR_OPENAI_COMPATIBLE_MODEL_ID_HERE"
 
 # 抓取
 max_urls: 3
@@ -50,3 +66,30 @@ export_font_en_size: 10.5
 export_title_bold: true
 export_title_size_multiplier: 1.0
 
+# 处理净化（可按需调整）
+processing_forbidden_prefixes:
+  - "Note:"
+  - "Editor's note"
+  - "作者："
+  - "来源："
+  - "发布于"
+  - "Updated"
+  - "Published"
+  - "CBS News"
+  - "CNN"
+  - "NYTimes"
+  - "The Verge"
+  - "A free daily digest"
+  - "This is the title for the native ad"
+  - "Posts from this author will be added"
+  - "Posts from this topic will be added"
+  - "Image:"
+  - "Photo:"
+  - "©"
+  - "All Rights Reserved"
+processing_forbidden_patterns:
+  - '(?i)^\s*(September|October|November|December|January|February|March|April|May|June|July|August)\s+\d{1,2},\s+\d{4}\s*/\s*\d{1,2}:\d{2}\s*(AM|PM)\s*[A-Z]{2,4}\s*/\s*([A-Za-z\s]+)$'
+  - '(?i)^\s*(Updated|Published)\s*:\s*.*$'
+  - '(?i)^\s*(By|作者)\s*:.*$'
+  - '(?i)^\s*(Source|来源)\s*:.*$'
+processing_min_words_after_clean: 200

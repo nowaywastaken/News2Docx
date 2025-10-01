@@ -61,6 +61,50 @@ def export_processed(data_or_path: Dict[str, Any] | Path, conf: Dict[str, Any], 
         data = data_or_path
 
     cfg_doc = build_document_config(conf)
+    # Last-mile sanitation on payload (avoid Note:/timestamps leaking into export)
+    def _sanitize_linewise(text: str, prefixes: list, patterns: list) -> str:
+        if not text:
+            return text
+        lines = text.splitlines()
+        out = []
+        import re
+        for ln in lines:
+            s = ln.strip()
+            dropped = False
+            for pref in prefixes or []:
+                try:
+                    if s.startswith(str(pref)):
+                        dropped = True
+                        break
+                except Exception:
+                    continue
+            if dropped:
+                continue
+            for pat in patterns or []:
+                try:
+                    if re.match(pat, s):
+                        dropped = True
+                        break
+                except Exception:
+                    continue
+            if not dropped:
+                out.append(ln)
+        return "\n".join(out).strip()
+
+    prefixes = list(conf.get("processing_forbidden_prefixes") or [])
+    patterns = list(conf.get("processing_forbidden_patterns") or [])
+    try:
+        data = json.loads(data_or_path.read_text(encoding="utf-8")) if isinstance(data_or_path, Path) else dict(data_or_path)
+    except Exception:
+        data = data_or_path if isinstance(data_or_path, dict) else {}
+    if isinstance(data, dict):
+        arts = data.get("articles") or []
+        for a in arts:
+            if isinstance(a, dict):
+                a["adjusted_content"] = _sanitize_linewise(a.get("adjusted_content") or "", prefixes, patterns)
+                a["translated_content"] = _sanitize_linewise(a.get("translated_content") or "", prefixes, patterns)
+    # Use sanitized 'data' for export
+    data_or_path = data
     export_dir, out_path = compute_export_targets(conf, output, default_filename)
     split_flag = split if split is not None else bool(conf.get("export_split") if conf.get("export_split") is not None else True)
 

@@ -3,3 +3,5 @@ config.yml
 .n2d_cache
 runs
 logs
+/.venv
+goal.md

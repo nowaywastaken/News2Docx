@@ -5,6 +5,7 @@ import time
 import json
 import random
 from dataclasses import dataclass, asdict, field
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, urlencode
@@ -340,6 +341,10 @@ class NewsScraper:
             "please refresh", "refresh your browser", "auto login", "automatic login", "sign in", "sign up",
             "subscribe", "newsletter", "cookie", "cookies", "privacy", "terms", "ad choices", "manage settings",
             "enable cookies", "your browser settings", "consent",
+            # Common site boilerplate
+            "Posts from this author will be added", "Posts from this topic will be added",
+            "A free daily digest of the news that matters most",
+            "This is the title for the native ad",
         ]
         extra = self.cfg.noise_patterns or []
         try:
@@ -384,6 +389,10 @@ class NewsScraper:
 
 
 def save_scraped_data_to_json(results: ScrapeResults, timestamp: str) -> str:
+    """Save scraped payload under runs/<timestamp>/scraped.json for unified run layout.
+
+    Returns absolute or relative path to the saved JSON.
+    """
     payload = {
         "metadata": {
             "total_articles": results.total,
@@ -394,7 +403,14 @@ def save_scraped_data_to_json(results: ScrapeResults, timestamp: str) -> str:
         },
         "articles": [asdict(a) for a in results.articles],
     }
-    fn = f"scraped_news_{timestamp}.json"
-    open(fn, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2))
-    unified_print(f"scrape saved: {fn}", "scrape", "save")
-    return fn
+    try:
+        from news2docx.services.runs import runs_base_dir
+        base = runs_base_dir()
+        run_dir = (Path(base) / timestamp)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        out_path = run_dir / "scraped.json"
+    except Exception:
+        out_path = Path(f"scraped_news_{timestamp}.json")
+    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    unified_print(f"scrape saved: {out_path}", "scrape", "save")
+    return str(out_path)
