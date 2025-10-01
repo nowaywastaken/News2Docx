@@ -254,7 +254,7 @@ def run_app() -> None:
 
             # Single action button: one-click run
             self.btn_run_all = QPushButton("一键运行", self)
-            self.btn_run_all.setGeometry(260, 36, 72, 28)
+            self.btn_run_all.setGeometry(260, 32, 72, 28)
 
             self.container = QWidget(self)
             self.container.setGeometry(16, 80, 318, 504)
@@ -276,18 +276,16 @@ def run_app() -> None:
         def _build_home_page(self) -> QWidget:
             from pathlib import Path
             page = QWidget()
+            # Remove app info row; give full space to logs
             form_host = QWidget(page)
-            form_host.setGeometry(0, 0, 318, 36)
+            form_host.setGeometry(0, 0, 318, 0)
             form = QFormLayout()
             form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
             form_host.setLayout(form)
 
-            v_app = QLabel(self.windowTitle())
-            form.addRow(QLabel("应用"), v_app)
-
             self.log_view = QTextEdit(page)
-            # Expand log area upward a bit (start higher, taller)
-            self.log_view.setGeometry(0, 40, 318, 464)
+            # Expand log area to occupy the freed space
+            self.log_view.setGeometry(0, 8, 318, 496)
             self.log_view.setReadOnly(True)
             self.log_view.setStyleSheet("background-color: #ffffff; border: 1px solid #e5e7eb; font-family: Consolas, monospace; font-size: 11px;")
 

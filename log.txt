@@ -1,3 +1,4 @@
-[2025-10-02 01:04:30][INFO][news2docx.ui.startup] logging initialized -> log.txt
-[2025-10-02 01:04:31][INFO][news2docx.ui.startup] ui ready
-[2025-10-02 01:04:31][INFO][news2docx.ui.startup] ui shown
+[2025-10-02 01:27:05][INFO][news2docx.ui.startup] logging initialized -> log.txt
+[2025-10-02 01:27:05][INFO][news2docx.ui.startup] ui ready
+[2025-10-02 01:27:06][INFO][news2docx.ui.startup] ui shown
+[2025-10-02 01:27:20][INFO][news2docx.ui.config] config saved: app.name -> News2Docx UI
