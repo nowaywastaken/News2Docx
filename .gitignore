@@ -2,6 +2,6 @@ __pycache__
 config.yml
 .n2d_cache
 runs
-logs
+log.txt
 /.venv
 goal.md
