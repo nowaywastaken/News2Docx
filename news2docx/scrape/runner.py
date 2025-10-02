@@ -15,7 +15,7 @@ import sqlite3
 from bs4 import BeautifulSoup
 from news2docx.scrape.selectors import load_selector_overrides, merge_selectors
 
-from news2docx.core.utils import now_stamp
+from news2docx.core.utils import now_stamp, force_https
 from news2docx.infra.logging import unified_print, log_task_start, log_task_end, log_processing_step
 
 
@@ -62,7 +62,7 @@ class ScrapeResults:
 
 def _http_post(url: str, json_body: Dict[str, Any], headers: Dict[str, str], timeout: int) -> Optional[Dict[str, Any]]:
     try:
-        r = requests.post(url, json=json_body, headers=headers, timeout=timeout)
+        r = requests.post(force_https(url), json=json_body, headers=headers, timeout=timeout)
         r.raise_for_status()
         return r.json() if r.content else {}
     except Exception:
@@ -71,7 +71,7 @@ def _http_post(url: str, json_body: Dict[str, Any], headers: Dict[str, str], tim
 
 def _http_get_text(url: str, headers: Dict[str, str], timeout: int) -> Optional[str]:
     try:
-        r = requests.get(url, headers=headers, timeout=timeout)
+        r = requests.get(force_https(url), headers=headers, timeout=timeout)
         r.raise_for_status()
         r.encoding = r.apparent_encoding or r.encoding or "utf-8"
         return r.text

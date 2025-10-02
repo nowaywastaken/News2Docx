@@ -146,6 +146,9 @@ def gdelt_fetch(query, *, timespan, maxrecords, sort):
         "maxrecords": maxrecords,
     }
     url = f"{BASE}?{urlencode(params)}"
+    # enforce HTTPS for safety
+    if url.lower().startswith("http://"):
+        url = "https://" + url[7:]
     resp = requests.get(url, timeout=20, headers=REQUEST_HEADERS)
     resp.raise_for_status()
 

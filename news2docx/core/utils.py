@@ -41,3 +41,22 @@ def ensure_directory(path: Union[str, Path]) -> Path:
     p = _P(path)
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def force_https(url: str) -> str:
+    """Upgrade any http:// URL to https://.
+
+    - If ``url`` is empty or already HTTPS, return as-is.
+    - Keep query string and path unchanged; only scheme is adjusted.
+    - Never downgrade or alter non-HTTP schemes.
+    """
+    try:
+        if not url:
+            return url
+        s = str(url).strip()
+        # Fast path
+        if s.lower().startswith("http://"):
+            return "https://" + s[7:]
+        return s
+    except Exception:
+        return url

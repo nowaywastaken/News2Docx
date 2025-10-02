@@ -246,6 +246,11 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: Optional[str] = Non
                     final_url = b
                 else:
                     final_url = b + "/chat/completions"
+            try:
+                from news2docx.core.utils import force_https as _force_https
+                final_url = _force_https(final_url)
+            except Exception:
+                pass
             resp = requests.post(final_url, headers=headers, json=body, timeout=120)
             _LAST_CALL_MS = int(time.time() * 1000)
             total_ms = int((time.time() - t0) * 1000)

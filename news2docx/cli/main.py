@@ -340,7 +340,8 @@ def doctor(
     # Reachability: any HTTP response (even 4xx/5xx) counts as reachable
     if mode == "remote":
         try:
-            r = requests.get(crawler_url, timeout=5)
+            from news2docx.core.utils import force_https as _force_https
+            r = requests.get(_force_https(crawler_url), timeout=5)
             typer.echo(f"Crawler reachable: {r.status_code}")
         except Exception as e:
             ok = False
@@ -350,7 +351,8 @@ def doctor(
 
     try:
         # Likely 405/404, but network OK means reachable
-        r2 = requests.get(chat_url, timeout=5)
+        from news2docx.core.utils import force_https as _force_https
+        r2 = requests.get(_force_https(chat_url), timeout=5)
         typer.echo(f"OpenAI-Compatible chat endpoint reachable: {r2.status_code}")
     except Exception as e:
         ok = False

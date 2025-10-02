@@ -33,6 +33,9 @@ openai_api_base: "PUT_YOUR_OPENAI_COMPATIBLE_API_BASE_URL_HERE"
 openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
 openai_model: "PUT_YOUR_OPENAI_COMPATIBLE_MODEL_ID_HERE"
 
+# 安全：强制将所有外部 HTTP 请求升级为 HTTPS
+enforce_https: true
+
 # 抓取
 max_urls: 3
 concurrency: 4
