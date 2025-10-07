@@ -87,6 +87,11 @@ python -m news2docx.cli.main export --config config.yml --split/--no-split
 - `run_export(conf, processed_json_path)`：按配置导出 DOCX（单文件或分篇）。
 - `run_app()`：高 DPI 初始化、加载配置与日志、启动主窗口。
 
+安全配置（加密）：
+- `news2docx.infra.secure_config.secure_load_config(path)`：读取配置时，从系统凭据库（Keyring）加载/生成主密钥，对 `security.sensitive_keys` 指定的字段（默认：`openai_api_key`、`crawler_api_token`）透明解密；当目标文件为根目录 `config.yml` 且发现明文时，会自动就地加密并回写，磁盘不留明文。
+- 不会对 `config.example.yml` 回写，保证示例可读。
+- 日志不会输出明文，仅提示“已加密/已解密”的元信息。
+
 UI 相关配置示例：
 
 ```yaml
@@ -133,6 +138,14 @@ python -m news2docx.cli.main --help
 示例（节选）：
 
 ```yaml
+# 安全：字段级加密（推荐开启）
+security:
+  enable_encryption: true
+  keyring_service: "News2Docx"
+  sensitive_keys:
+    - openai_api_key
+    - crawler_api_token
+
 crawler_mode: remote
 crawler_api_url: "PUT_YOUR_CRAWLER_API_URL_HERE"
 crawler_api_token: "PUT_YOUR_CRAWLER_API_TOKEN_HERE"
@@ -239,4 +252,3 @@ python scripts/smoke.py
 ## License
 
 暂未声明开源许可证；在生产/商用前请与作者确认授权条款。
-

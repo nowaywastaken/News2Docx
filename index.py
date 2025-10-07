@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from news2docx.core.config import load_config_file
+from news2docx.infra.secure_config import secure_load_config
 from news2docx.infra.logging import init_logging, unified_print
 from news2docx.cli.common import ensure_openai_env
 
@@ -26,14 +26,15 @@ from news2docx.cli.common import ensure_openai_env
 # ---------------- Configuration & Logging ----------------
 
 def load_app_config(config_path: str) -> Dict[str, Any]:
-    """Load application configuration strictly from a YAML/JSON path.
+    """Load application configuration via secure loader.
 
-    No defaults are applied here; upstream modules may have their own defaults.
+    This enforces field-level encryption for sensitive keys when enabled
+    by config, while returning plaintext values for runtime use.
     """
     p = Path(config_path)
     if not p.exists():
         raise FileNotFoundError("config.yml not found at project root")
-    data = load_config_file(p)
+    data = secure_load_config(str(p))
     if not isinstance(data, dict):
         raise RuntimeError("Invalid config content")
     return data
@@ -250,7 +251,7 @@ def run_app() -> None:
             from PyQt6.QtWidgets import QLineEdit
             self.input_count_edit = QLineEdit(self)
             self.input_count_edit.setGeometry(200, 36, 54, 24)
-            self.input_count_edit.setPlaceholderText("3")
+            self.input_count_edit.setPlaceholderText("1,2,3...")
 
             # Single action button: one-click run
             self.btn_run_all = QPushButton("一键运行", self)
@@ -276,14 +277,11 @@ def run_app() -> None:
         def _build_home_page(self) -> QWidget:
             from pathlib import Path
             page = QWidget()
-            form_host = QWidget(page)
-            form_host.setGeometry(0, 0, 318, 36)
-            form = QFormLayout()
-            form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-            form_host.setLayout(form)
 
-            v_app = QLabel(self.windowTitle())
-            form.addRow(QLabel("应用"), v_app)
+            # Contact info (replaces previous "应用" row)
+            contact = QLabel("<a href='mailto:nowaywastaken@outlook.com'>联系开发者：nowaywastaken@outlook.com</a>", page)
+            contact.setGeometry(0, 0, 318, 36)
+            contact.setOpenExternalLinks(True)
 
             self.log_view = QTextEdit(page)
             # Expand log area upward a bit (start higher, taller)
@@ -570,8 +568,8 @@ def run_app() -> None:
     except Exception:
         pass
 
-    conf = load_app_config("config.yml")
     prepare_logging("log.txt")
+    conf = load_app_config("config.yml")
     app = QApplication(sys.argv)
     w = MainWindow(conf)
     w.show()

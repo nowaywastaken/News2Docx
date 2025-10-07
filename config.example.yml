@@ -11,7 +11,15 @@ ui:
     background_color: "#F7F9FC"
     text_color: "#1F2937"
     accent_color: "#10B981"
-    danger_color: "#EF4444"
+  danger_color: "#EF4444"
+
+# 安全设置（字段级加密，推荐保持开启）
+security:
+  enable_encryption: true            # 启用字段级加密（仅在 config.yml 上持久化回写）
+  keyring_service: "News2Docx"       # 系统凭据库中的服务名
+  sensitive_keys:                     # 会在磁盘上加密保存的字段（运行时自动解密）
+    - openai_api_key
+    - crawler_api_token
 
 # News2Docx 示例配置（复制为 config.yml 后编辑）
 
