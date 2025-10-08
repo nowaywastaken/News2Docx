@@ -41,27 +41,11 @@ def load_app_config(config_path: str) -> Dict[str, Any]:
 
 
 def prepare_logging(log_file: str) -> None:
-    """Route project logging to root log file and console.
-
-    We avoid rotation by setting an extremely large max-bytes and 0 backups.
-    """
-    # Ensure absolute path for log file
-    lf_path = Path(log_file).resolve()
-    try:
-        # Reset the log file on each startup (truncate to zero)
-        lf_path.parent.mkdir(parents=True, exist_ok=True)
-        lf_path.write_text("", encoding="utf-8")
-    except Exception:
-        # If truncation fails, continue; logging will still attempt to write
-        pass
-    lf = str(lf_path)
-    os.environ["N2D_LOG_FILE"] = lf
-    os.environ["N2D_LOG_ROTATE"] = "size"
-    os.environ["N2D_LOG_MAX_BYTES"] = str(10**12)
-    os.environ["N2D_LOG_BACKUP"] = "0"
+    """Initialize console-only logging (no local file writes)."""
+    # Respect level if provided; do not set N2D_LOG_FILE
     os.environ["N2D_LOG_LEVEL"] = os.environ.get("N2D_LOG_LEVEL", "INFO")
     init_logging(force=True)
-    unified_print("logging initialized -> log.txt", "ui", "startup", level="info")
+    unified_print("logging initialized (console only)", "ui", "startup", level="info")
 
 
 # ---------------- Orchestration (scrape -> process -> export) ----------------
@@ -333,9 +317,10 @@ def run_app() -> None:
 
             self._log_tail_pos = 0
             self._log_path = str(Path.cwd() / "log.txt")
+            # File logging is disabled; keep timer inert if file absent
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._poll_log)
-            self._timer.start(700)
+            self._timer.start(1000)
 
             return page
 
@@ -534,6 +519,27 @@ def run_app() -> None:
                     s = run_scrape(cfg)
                     p = run_process(self.config, s)
                     run_export(self.config, p)
+                    # Auto-clean the run directory after successful export
+                    try:
+                        from pathlib import Path as _P
+
+                        run_dir = _P(p).parent
+                        # best-effort removal of processed/scraped and the directory
+                        for name in ("processed.json", "scraped.json"):
+                            try:
+                                (_P(run_dir) / name).unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                        # attempt to remove the run directory if empty
+                        try:
+                            next(run_dir.iterdir())
+                        except StopIteration:
+                            try:
+                                run_dir.rmdir()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
             except Exception as e:
                 unified_print(f"run error: {e}", "ui", "error", level="error")
 

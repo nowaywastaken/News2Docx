@@ -18,10 +18,9 @@ def test_config_example_ui_structure():
     assert bool(ui["high_dpi"]) is True
 
 
-def test_prepare_logging_and_write(tmp_path):
+def test_prepare_logging_console_only(tmp_path):
     log_path = tmp_path / "tmp_log.txt"
     prepare_logging(str(log_path))
     unified_print("hello", "test", "case", level="info")
-    assert log_path.exists()
-    content = log_path.read_text(encoding="utf-8")
-    assert "hello" in content
+    # Logging to local files is disabled by design; file should not be created
+    assert not log_path.exists()

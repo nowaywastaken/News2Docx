@@ -11,13 +11,7 @@ This module provides a centralized, Log4j-like logging system for Python:
 Configuration via environment variables (prefix: N2D_):
 - ``N2D_LOG_LEVEL``: TRACE, DEBUG, INFO, WARN, ERROR, FATAL (default: INFO)
 - ``N2D_LOG_JSON``: 1 to enable JSON layout (default: 0)
-- ``N2D_LOG_FILE``: path to a log file to enable file appender (default: logs/news2docx.log)
-- ``N2D_LOG_DIR``: when set, used as directory for default log file
-- ``N2D_LOG_ROTATE``: size|time (default: size)
-- ``N2D_LOG_MAX_BYTES``: for size rotation (default: 10485760 i.e. 10MB)
-- ``N2D_LOG_BACKUP``: backup count for rotation (default: 5)
-- ``N2D_LOG_WHEN``: for time rotation (default: midnight)
-- ``N2D_LOG_INTERVAL``: for time rotation interval (default: 1)
+- Note: local file appenders are disabled by design for security; only console output is enabled.
 
 The helpers below keep backward compatibility for existing call sites
 like ``unified_print`` and ``log_task_*``.
@@ -150,12 +144,8 @@ def _level_from_env(name: str, default: str = "INFO") -> int:
 
 
 def _default_log_file() -> str:
-    directory = os.getenv("N2D_LOG_DIR") or os.path.join(os.getcwd(), "logs")
-    try:
-        os.makedirs(directory, exist_ok=True)
-    except Exception:
-        pass
-    return os.getenv("N2D_LOG_FILE") or os.path.join(directory, "news2docx.log")
+    # File logging is disabled; keep placeholder for compatibility.
+    return ""
 
 
 def build_logging_config() -> Dict[str, Any]:
@@ -167,7 +157,7 @@ def build_logging_config() -> Dict[str, Any]:
     backup = int(os.getenv("N2D_LOG_BACKUP") or 5)
     when = os.getenv("N2D_LOG_WHEN") or "midnight"
     interval = int(os.getenv("N2D_LOG_INTERVAL") or 1)
-    log_file = _default_log_file()
+    # File logging is disabled by default
 
     fmt = "[%(asctime)s][%(levelname)s][%(name)s] %(message)s%(mdc_suffix)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
@@ -184,7 +174,7 @@ def build_logging_config() -> Dict[str, Any]:
     }
 
     console_formatter = "json" if json_layout else "pattern"
-    file_formatter = "json" if json_layout else "pattern"
+    # file_formatter unused (file handler disabled)
 
     handlers: Dict[str, Any] = {
         "console": {
@@ -196,30 +186,7 @@ def build_logging_config() -> Dict[str, Any]:
         }
     }
 
-    # File appender (rolling)
-    if rotate == "time":
-        handlers["file"] = {
-            "class": "logging.handlers.TimedRotatingFileHandler",
-            "level": level,
-            "formatter": file_formatter,
-            "filters": ["mdc"],
-            "filename": log_file,
-            "when": when,
-            "interval": interval,
-            "backupCount": backup,
-            "encoding": "utf-8",
-        }
-    else:
-        handlers["file"] = {
-            "class": "logging.handlers.RotatingFileHandler",
-            "level": level,
-            "formatter": file_formatter,
-            "filters": ["mdc"],
-            "filename": log_file,
-            "maxBytes": max_bytes,
-            "backupCount": backup,
-            "encoding": "utf-8",
-        }
+    # File appender disabled to avoid local file logging
 
     config: Dict[str, Any] = {
         "version": 1,
@@ -233,7 +200,7 @@ def build_logging_config() -> Dict[str, Any]:
         "handlers": handlers,
         "root": {
             "level": level,
-            "handlers": ["console", "file"],
+            "handlers": ["console"],
         },
         # Named loggers inherit root config; examples for fine-grained control:
         # "loggers": { "news2docx": {"level": level, "handlers": ["console", "file"], "propagate": False} }
