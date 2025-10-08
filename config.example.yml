@@ -8,6 +8,7 @@ app:
 ui:
   fixed_width: 350
   fixed_height: 600
+  high_dpi: true
   initial_page: 0
   theme:
     primary_color: "#4C7DFF"

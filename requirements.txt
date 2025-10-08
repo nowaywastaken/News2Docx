@@ -10,3 +10,4 @@ cryptography>=41.0.0
 keyring>=24.2.0
 ruff>=0.13.0
 black>=24.4.0
+pytest>=7.4.0

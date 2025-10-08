@@ -415,7 +415,7 @@ def process_article(
         adjusted = adjusted_raw
     # Merge short English paragraphs to reduce excessive breaks
     adjusted = _merge_short_paragraphs_text(adjusted, max_chars=int(merge_short_chars or 80))
-    # Step 2: translation
+    # Step 2: translation (initial pass)
     sys_p, usr_p = build_translation_prompts(adjusted, target_lang)
     translated_raw = call_ai_api(sys_p, usr_p)
     translated_raw = ensure_paragraph_parity(translated_raw, adjusted)
@@ -427,8 +427,22 @@ def process_article(
     # Title translation
     translated_title = _translate_title(article.title, target_lang)
 
+    # Fallback: if cleaned English falls below min threshold, revert English to adjusted_raw
+    # and regenerate translation to keep bilingual parity.
     if _count_words(adjusted) < int(cfg_clean.get("min_words", 200)):
         adjusted = adjusted_raw
+        # Regenerate translation against the reverted English text
+        sys_p2, usr_p2 = build_translation_prompts(adjusted, target_lang)
+        translated_raw2 = call_ai_api(sys_p2, usr_p2)
+        translated_raw2 = ensure_paragraph_parity(translated_raw2, adjusted)
+        translated2, rm2b, kinds2b = _sanitize_meta(
+            translated_raw2, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
+        )
+        if not translated2:
+            translated2 = translated_raw2
+        translated = translated2
+        rm2 = rm2b
+        kinds2 = kinds2 + kinds2b
 
     res = {
         "id": str(article.index),
@@ -436,7 +450,8 @@ def process_article(
         "translated_title": translated_title,
         "original_content": article.content,
         "adjusted_content": adjusted,
-        "adjusted_word_count": final_wc,
+        # Use the final adjusted text word count to reflect the exported content
+        "adjusted_word_count": _count_words(adjusted),
         "translated_content": translated,
         "target_language": target_lang,
         "processing_timestamp": now_stamp(),
