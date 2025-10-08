@@ -488,28 +488,80 @@ class NewsScraper:
         log_task_start(
             "scrape", "run", {"max_urls": self.cfg.max_urls, "concurrency": self.cfg.concurrency}
         )
-        urls_all = self._fetch_urls()
-        # filter previously crawled
-        urls_new = self._filter_new_urls(urls_all)
-        # pick subset (random or top)
-        urls = self._pick_urls(urls_new)
-        if not urls:
-            return ScrapeResults(total=0, success=0, failed=0, articles=[])
-        arts: List[Article] = []
-        with ThreadPoolExecutor(max_workers=max(1, self.cfg.concurrency)) as ex:
-            futs = {ex.submit(self._scrape_one, i + 1, u): u for i, u in enumerate(urls)}
-            for fut in as_completed(futs):
-                a = fut.result()
-                if a:
-                    arts.append(a)
-        res = ScrapeResults(
-            total=len(urls), success=len(arts), failed=len(urls) - len(arts), articles=arts
-        )
-        # mark successfully scraped URLs into DB to avoid re-crawling
+
+        target_success = max(1, int(self.cfg.max_urls))
+        success_arts: List[Article] = []
+        attempted_urls: set[str] = set()
+        total_attempts = 0
+
+        # 初始候选池
+        pool = self._filter_new_urls(self._fetch_urls())
+        # 不再用 _pick_urls 限制池大小，改为在循环中按需取批次
+
+        # 为了避免无限循环：最多启动若干补充轮（含初始轮）
+        # 这里不新增配置，采用与并发规模相关的安全上限
+        max_rounds = 5
+        rounds = 0
+
+        while len(success_arts) < target_success and rounds < max_rounds:
+            # 补充候选池
+            if not pool:
+                rounds += 1
+                fresh = self._filter_new_urls(self._fetch_urls())
+                # 去除本轮已尝试过的URL
+                pool = [u for u in fresh if u not in attempted_urls]
+                if not pool:
+                    # 无可用新URL，退出
+                    break
+
+            # 按需取下一批（不超过剩余目标数与并发）
+            need = target_success - len(success_arts)
+            batch_size = max(1, min(int(self.cfg.concurrency), need, len(pool)))
+            batch: List[str] = []
+            for _ in range(batch_size):
+                if not pool:
+                    break
+                u = pool.pop(0)
+                if u in attempted_urls:
+                    continue
+                attempted_urls.add(u)
+                batch.append(u)
+
+            if not batch:
+                # 虽然pool非空，但都被标记为已尝试；继续下一轮补充
+                rounds += 1
+                continue
+
+            # 抓取该批
+            with ThreadPoolExecutor(max_workers=max(1, self.cfg.concurrency)) as ex:
+                futs = {ex.submit(self._scrape_one, total_attempts + i + 1, u): u for i, u in enumerate(batch)}
+                for fut in as_completed(futs):
+                    total_attempts += 1
+                    a = fut.result()
+                    if a:
+                        success_arts.append(a)
+                        if len(success_arts) >= target_success:
+                            break
+
+        # 截断至目标篇数（并保持稳定顺序），并重排索引
+        success_arts = success_arts[:target_success]
         try:
-            self._mark_crawled_bulk([a.url for a in arts])
+            for i, a in enumerate(success_arts, start=1):
+                a.index = i  # type: ignore[attr-defined]
         except Exception:
             pass
+        failed_count = max(0, total_attempts - len(success_arts))
+
+        res = ScrapeResults(
+            total=total_attempts, success=len(success_arts), failed=failed_count, articles=success_arts
+        )
+
+        # 仅标记成功的URL，失败不入库以便后续机会重试
+        try:
+            self._mark_crawled_bulk([a.url for a in success_arts])
+        except Exception:
+            pass
+
         log_task_end("scrape", "run", True, asdict(res))
         return res
 
