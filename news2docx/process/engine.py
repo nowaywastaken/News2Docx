@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -28,7 +28,7 @@ def _load_model_and_base_from_config() -> Tuple[Optional[str], Optional[str]]:
     No defaults here; caller decides fallback/validation strategy.
     """
     try:
-from pathlib import Path
+        from pathlib import Path
 
         import yaml  # type: ignore
 
@@ -251,9 +251,7 @@ def call_ai_api(
 
                 parsed_base = urlparse(base)
                 if parsed_base.scheme.lower() != "https":
-                    raise RuntimeError(
-                        f"安全策略：OPENAI_API_BASE 必须为 https，当前为：{base}"
-                    )
+                    raise RuntimeError(f"安全策略：OPENAI_API_BASE 必须为 https，当前为：{base}")
             except Exception as _e:
                 raise RuntimeError(str(_e))
             env_full_url = (os.getenv("OPENAI_API_URL") or "").strip()

@@ -152,11 +152,6 @@ def build_logging_config() -> Dict[str, Any]:
     """Build a dictConfig resembling Log4j concepts (appenders/layouts)."""
     json_layout = _env_bool("N2D_LOG_JSON", False)
     level = _level_from_env("N2D_LOG_LEVEL", "INFO")
-    rotate = (os.getenv("N2D_LOG_ROTATE") or "size").strip().lower()
-    max_bytes = int(os.getenv("N2D_LOG_MAX_BYTES") or 10 * 1024 * 1024)
-    backup = int(os.getenv("N2D_LOG_BACKUP") or 5)
-    when = os.getenv("N2D_LOG_WHEN") or "midnight"
-    interval = int(os.getenv("N2D_LOG_INTERVAL") or 1)
     # File logging is disabled by default
 
     fmt = "[%(asctime)s][%(levelname)s][%(name)s] %(message)s%(mdc_suffix)s"

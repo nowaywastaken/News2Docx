@@ -37,14 +37,13 @@ def test_process_article_fallback_regenerates_translation(monkeypatch):
     assert res["adjusted_content"].startswith("Short text"), "adjusted_content should be reverted"
 
     # And translation should be regenerated to match the reverted English content
-    assert res["translated_content"].startswith(
-        "ZH:" + res["adjusted_content"]
-    ), "translation must match reverted English content"
+    assert res["translated_content"].startswith("ZH:" + res["adjusted_content"]), (
+        "translation must match reverted English content"
+    )
 
     # Word count reflects final adjusted content
     from news2docx.process.engine import _count_words
 
-    assert res["adjusted_word_count"] == _count_words(
-        res["adjusted_content"]
-    ), "adjusted_word_count must reflect final content"
-
+    assert res["adjusted_word_count"] == _count_words(res["adjusted_content"]), (
+        "adjusted_word_count must reflect final content"
+    )

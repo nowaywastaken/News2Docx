@@ -225,7 +225,7 @@ class NewsScraper:
                     raise ValueError(
                         f"安全策略：crawler_api_url 必须为 https，当前为：{cfg.api_url}"
                     )
-            except Exception as e:
+            except Exception:
                 raise
         self.cfg = cfg
         # Ensure DB directory exists

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -398,7 +398,7 @@ def export(
 def doctor(
     config: Optional[Path] = typer.Option(
         None, "--config", exists=True, dir_okay=False, readable=True
-    )
+    ),
 ) -> None:
     """Check required env vars and endpoint reachability (no real calls)."""
     import requests
@@ -476,7 +476,7 @@ def stats() -> None:
 
 @app.command()
 def clean(
-    keep: int = typer.Option(3, "--keep", min=0, help="Keep the latest N runs/* directories")
+    keep: int = typer.Option(3, "--keep", min=0, help="Keep the latest N runs/* directories"),
 ) -> None:
     """Remove old runs directories, keeping the most recent N."""
     base = runs_base_dir()
