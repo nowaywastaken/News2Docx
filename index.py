@@ -353,8 +353,7 @@ def run_app() -> None:
             # Editable settings grouped into categories with pagination via QStackedLayout
 
             import yaml
-            from PyQt6.QtWidgets import QLineEdit
-            from PyQt6.QtWidgets import QSizePolicy
+            from PyQt6.QtWidgets import QLineEdit, QSizePolicy
 
             page = QWidget()
             # Category links (absolute positioning)
@@ -364,19 +363,34 @@ def run_app() -> None:
             # - Scrape: only mode, service URL, token, noise keywords
             # - Process / Export remain visible
             # Hidden: 应用(app), 界面(ui), 其他(other)
+            # Merge Scrape + Process into a single page for simpler editing
             cats = [
-                ("抓取", "scrape"),
-                ("处理", "process"),
+                ("抓取/处理", "scrape_process"),
                 ("导出", "export"),
             ]
             self._cat_links: list[QLabel] = []
             x = 0
+            try:
+                from PyQt6.QtGui import QFontMetrics
+
+                fm = QFontMetrics(cat_bar.font())
+            except Exception:
+                fm = None  # type: ignore
             for i, (label, _k) in enumerate(cats):
                 link = QLabel(f"<a href='#cat{i}'>{label}</a>", cat_bar)
-                link.setGeometry(x, 0, 50, 20)
+                # Dynamically size link to avoid overlap (absolute positioning remains)
+                if fm is not None:
+                    try:
+                        tw = fm.horizontalAdvance(label)
+                        w = max(50, tw + 12)
+                    except Exception:
+                        w = 60
+                else:
+                    w = 60
+                link.setGeometry(x, 0, w, 20)
                 link.setOpenExternalLinks(False)
                 self._cat_links.append(link)
-                x += 52
+                x += w + 10  # add small spacing to avoid overlap
 
             # Pages container
             container = QWidget(page)
@@ -442,7 +456,7 @@ def run_app() -> None:
                 "pick_mode": "选择方式",
                 "random_seed": "随机种子",
                 "db_path": "缓存数据库路径",
-                "noise_patterns": "噪声关键词",
+                "noise_patterns": "噪声词",
                 # process
                 "openai_api_base": "模型地址",
                 "openai_api_key": "模型密钥",
@@ -517,17 +531,23 @@ def run_app() -> None:
                 except Exception:
                     pass
                 w.setLayout(f)
-                pairs_in_cat = list(groups.get(cat_key, []))
-                if cat_key == "scrape":
-                    allowed = {
+                # Build items for each visible category
+                if cat_key == "scrape_process":
+                    # Merge: keep limited scrape keys + full process keys
+                    scrape_pairs = list(groups.get("scrape", []))
+                    allowed_scrape = {
                         "crawler_mode",
                         "crawler_api_url",
                         "crawler_api_token",
                         "noise_patterns",
                     }
-                    pairs_in_cat = [(k, v) for (k, v) in pairs_in_cat if k in allowed]
+                    scrape_pairs = [(k, v) for (k, v) in scrape_pairs if k in allowed_scrape]
+                    process_pairs = list(groups.get("process", []))
+                    pairs_in_cat = scrape_pairs + process_pairs
                 elif cat_key in {"app", "ui", "other"}:
                     pairs_in_cat = []
+                else:
+                    pairs_in_cat = list(groups.get(cat_key, []))
 
                 # Determine label and field widths based on available area
                 label_fixed_w = 96  # keep labels compact to widen field column

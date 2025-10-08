@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import re
 from urllib.parse import urlencode, urlparse
 
 import requests
