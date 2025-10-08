@@ -28,7 +28,7 @@ def _load_model_and_base_from_config() -> Tuple[Optional[str], Optional[str]]:
     No defaults here; caller decides fallback/validation strategy.
     """
     try:
-        from pathlib import Path
+from pathlib import Path
 
         import yaml  # type: ignore
 
@@ -245,6 +245,17 @@ def call_ai_api(
             base = (base_env or base_cfg or "").strip()
             if not base:
                 raise RuntimeError("缺少 OPENAI_API_BASE（或 config.yml: openai_api_base）")
+            # Enforce HTTPS for base
+            try:
+                from urllib.parse import urlparse
+
+                parsed_base = urlparse(base)
+                if parsed_base.scheme.lower() != "https":
+                    raise RuntimeError(
+                        f"安全策略：OPENAI_API_BASE 必须为 https，当前为：{base}"
+                    )
+            except Exception as _e:
+                raise RuntimeError(str(_e))
             env_full_url = (os.getenv("OPENAI_API_URL") or "").strip()
             if url:
                 final_url = url
@@ -257,6 +268,17 @@ def call_ai_api(
                     final_url = b
                 else:
                     final_url = b + "/chat/completions"
+            # Enforce HTTPS for final URL
+            try:
+                from urllib.parse import urlparse as _urlparse
+
+                _pu = _urlparse(final_url)
+                if _pu.scheme.lower() != "https":
+                    raise RuntimeError(
+                        f"安全策略：OpenAI-Compatible 接口必须为 https，当前为：{final_url}"
+                    )
+            except Exception as _e2:
+                raise RuntimeError(str(_e2))
             resp = requests.post(final_url, headers=headers, json=body, timeout=120)
             _LAST_CALL_MS = int(time.time() * 1000)
             if resp.status_code == 200:

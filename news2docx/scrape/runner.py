@@ -215,6 +215,18 @@ class NewsScraper:
         mode = (cfg.mode or "remote").lower()
         if mode == "remote" and not cfg.api_token:
             raise ValueError("CRAWLER_API_TOKEN is required in remote mode")
+        # Enforce HTTPS for remote crawler endpoint
+        if mode == "remote":
+            try:
+                from urllib.parse import urlparse
+
+                pu = urlparse(str(cfg.api_url or ""))
+                if pu.scheme.lower() != "https":
+                    raise ValueError(
+                        f"安全策略：crawler_api_url 必须为 https，当前为：{cfg.api_url}"
+                    )
+            except Exception as e:
+                raise
         self.cfg = cfg
         # Ensure DB directory exists
         try:
