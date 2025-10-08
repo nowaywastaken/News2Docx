@@ -535,7 +535,14 @@ def run_app() -> None:
 
                 for key, val in pairs_in_cat:
                     editor = QLineEdit(w)
-                    editor.setText(str(val))
+                    # For noise_patterns, present without brackets, joined by Chinese comma
+                    if key == "noise_patterns" and isinstance(val, list):
+                        try:
+                            editor.setText("，".join([str(x) for x in val]))
+                        except Exception:
+                            editor.setText(str(val))
+                    else:
+                        editor.setText(str(val))
                     # Ensure the field grows and is minimally wide
                     try:
                         sp = editor.sizePolicy()
@@ -637,6 +644,21 @@ def run_app() -> None:
                     ref = ref[p]
                 # try convert types from original
                 orig = ref.get(parts[-1]) if isinstance(ref, dict) else None
+                # Special handling: noise_patterns supports comma or Chinese comma separated items
+                if parts[-1] == "noise_patterns":
+                    s = (value or "").strip()
+                    if s == "":
+                        new_val = []
+                    else:
+                        # Accept both ',' and '，' as separators; trim spaces; drop empties
+                        tokens = [t.strip() for t in s.replace("，", ",").split(",")]
+                        new_val = [t for t in tokens if t]
+                    ref[parts[-1]] = new_val
+                    Path("config.yml").write_text(self._yaml_dump(self.config), encoding="utf-8")
+                    unified_print(
+                        f"config saved: noise_patterns -> {new_val}", "ui", "config", level="info"
+                    )
+                    return
                 new_val: Any = value
                 if isinstance(orig, bool):
                     new_val = str(value).strip().lower() in {"1", "true", "yes", "on"}

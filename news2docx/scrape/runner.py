@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import re
 from urllib.parse import urlencode, urlparse
 
 import requests
@@ -173,13 +174,41 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
         # Heuristic noise filtering: drop login/cookie/notice banners
         NOISE_PATTERNS = noise_patterns or []
 
+        # Split patterns into substrings and regexes
+        substrings: List[str] = []
+        regexes: List[re.Pattern[str]] = []
+        for p in NOISE_PATTERNS:
+            try:
+                ps = str(p).strip()
+                if not ps:
+                    continue
+                if (ps.startswith("/") and ps.endswith("/") and len(ps) >= 2) or ps.lower().startswith(
+                    "re:"
+                ):
+                    body = ps[1:-1] if (ps.startswith("/") and ps.endswith("/")) else ps[3:]
+                    try:
+                        regexes.append(re.compile(body, flags=re.IGNORECASE))
+                    except Exception:
+                        # Fallback to substring if regex fails
+                        substrings.append(ps)
+                else:
+                    substrings.append(ps)
+            except Exception:
+                continue
+
         def _is_noise(s: str) -> bool:
             t = s.strip().lower()
             if len(t) <= 20:
                 return True
-            for pat in NOISE_PATTERNS:
+            for pat in substrings:
                 if pat.lower() in t:
                     return True
+            for rgx in regexes:
+                try:
+                    if rgx.search(s):
+                        return True
+                except Exception:
+                    continue
             return False
 
         filtered = [x for x in paras if not _is_noise(x)]
@@ -197,13 +226,37 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
     # Apply same noise filtering for generic fallback
     NOISE_PATTERNS = noise_patterns or []
 
+    substrings: List[str] = []
+    regexes: List[re.Pattern[str]] = []
+    for p in NOISE_PATTERNS:
+        try:
+            ps = str(p).strip()
+            if not ps:
+                continue
+            if (ps.startswith("/") and ps.endswith("/") and len(ps) >= 2) or ps.lower().startswith("re:"):
+                body = ps[1:-1] if (ps.startswith("/") and ps.endswith("/")) else ps[3:]
+                try:
+                    regexes.append(re.compile(body, flags=re.IGNORECASE))
+                except Exception:
+                    substrings.append(ps)
+            else:
+                substrings.append(ps)
+        except Exception:
+            continue
+
     def _is_noise(s: str) -> bool:
         t = s.strip().lower()
         if len(t) <= 20:
             return True
-        for pat in NOISE_PATTERNS:
+        for pat in substrings:
             if pat.lower() in t:
                 return True
+        for rgx in regexes:
+            try:
+                if rgx.search(s):
+                    return True
+            except Exception:
+                continue
         return False
 
     content = "\n\n".join([p for p in paras if len(p) > 20 and not _is_noise(p)])

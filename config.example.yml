@@ -44,7 +44,9 @@ timeout: 30                         # per-request timeout (seconds)
 pick_mode: random                   # random | top
 random_seed: null                   # integer or null
 db_path: ".n2d_cache/crawled.sqlite3"  # deduplicate previously processed URLs
-noise_patterns: []                  # extra noise filters (lowercase substrings)
+noise_patterns: []                  # extra noise filters; enter plain text or regex
+                                    # - Plain: use Chinese or English comma to separate, e.g. 关键词1，关键词2
+                                    # - Regex: prefix with `re:` or wrap with `/.../`, e.g. re:^subscribe$ 或 /cookie(s)?/i
 
 # Processing (OpenAI-compatible API). Model and API key are required.
 openai_api_base: "https://api.siliconflow.cn/v1"
