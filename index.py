@@ -354,6 +354,7 @@ def run_app() -> None:
 
             import yaml
             from PyQt6.QtWidgets import QLineEdit
+            from PyQt6.QtWidgets import QSizePolicy
 
             page = QWidget()
             # Category links (absolute positioning)
@@ -382,6 +383,21 @@ def run_app() -> None:
             container.setGeometry(0, 26, 318, 454)
             sub_stack = QStackedLayout()
             container.setLayout(sub_stack)
+
+            # Compute UI width/height for settings area and log it
+            try:
+                ui_w = int(self.width())
+                ui_h = int(self.height())
+                area_w = int(container.width())
+                area_h = int(container.height())
+                unified_print(
+                    f"ui size: window=({ui_w}x{ui_h}), settings-area=({area_w}x{area_h})",
+                    "ui",
+                    "layout",
+                    level="info",
+                )
+            except Exception:
+                area_w, area_h = 318, 454
 
             self._editors: dict[str, QLineEdit] = {}
 
@@ -428,8 +444,8 @@ def run_app() -> None:
                 "db_path": "缓存数据库路径",
                 "noise_patterns": "噪声关键词",
                 # process
-                "openai_api_base": "OpenAI兼容API根地址",
-                "openai_api_key": "OpenAI兼容API密钥",
+                "openai_api_base": "模型地址",
+                "openai_api_key": "模型密钥",
                 "openai_model": "模型ID",
                 "target_language": "目标语言",
                 "merge_short_paragraph_chars": "短段合并阈值",
@@ -495,6 +511,11 @@ def run_app() -> None:
                 w = QWidget()
                 f = QFormLayout()
                 f.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+                # Make second column (fields) grow to use available width
+                try:
+                    f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+                except Exception:
+                    pass
                 w.setLayout(f)
                 pairs_in_cat = list(groups.get(cat_key, []))
                 if cat_key == "scrape":
@@ -508,13 +529,35 @@ def run_app() -> None:
                 elif cat_key in {"app", "ui", "other"}:
                     pairs_in_cat = []
 
+                # Determine label and field widths based on available area
+                label_fixed_w = 96  # keep labels compact to widen field column
+                field_min_w = max(80, int(area_w) - label_fixed_w - 24)
+
                 for key, val in pairs_in_cat:
                     editor = QLineEdit(w)
                     editor.setText(str(val))
+                    # Ensure the field grows and is minimally wide
+                    try:
+                        sp = editor.sizePolicy()
+                        sp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+                        sp.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+                        editor.setSizePolicy(sp)
+                    except Exception:
+                        pass
+                    try:
+                        editor.setMinimumWidth(field_min_w)
+                    except Exception:
+                        pass
                     editor.editingFinished.connect(
                         lambda k=key, e=editor: self._on_conf_changed(k, e.text())
                     )
-                    f.addRow(QLabel(_label_for(key)), editor)
+                    lbl = QLabel(_label_for(key))
+                    try:
+                        lbl.setFixedWidth(label_fixed_w)
+                        lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    except Exception:
+                        pass
+                    f.addRow(lbl, editor)
                     self._editors[key] = editor
                 cat_to_index[cat_key] = sub_stack.count()
                 sub_stack.addWidget(w)
