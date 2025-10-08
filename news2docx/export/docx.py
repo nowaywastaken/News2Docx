@@ -2,13 +2,13 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Any, List
 from pathlib import Path
+from typing import Any, Dict, List
 
 from docx import Document
-from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.shared import Cm, Pt
 
 from news2docx.infra.logging import unified_print
 
@@ -17,7 +17,7 @@ def _sanitize_title_for_display(title: str) -> str:
     """Remove publisher suffix and trailing punctuation from titles.
     Example: "... hardware. | The Verge" -> "... hardware"
     - Drop anything after ' | '
-    - Strip trailing punctuation like . ! ? 銆?锛?锛?    """
+    - Strip trailing punctuation like . ! ? 銆?锛?锛?"""
     if not title:
         return ""
     t = str(title).strip()
@@ -111,7 +111,7 @@ class DocumentWriter:
             run.font.size = Pt(self.cfg.font_zh.size_pt)
             # Ensure East Asia font set to 瀹嬩綋
             try:
-                run._element.rPr.rFonts.set(qn('w:eastAsia'), '瀹嬩綋')
+                run._element.rPr.rFonts.set(qn("w:eastAsia"), "瀹嬩綋")
             except Exception:
                 pass
         else:
@@ -121,19 +121,27 @@ class DocumentWriter:
     def _write_title(self, doc: Document, title_text: str, zh: bool) -> None:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = p.add_run(_strip_markdown(_sanitize_title_for_display(_safe_title(title_text)), drop_headings=True))
+        r = p.add_run(
+            _strip_markdown(
+                _sanitize_title_for_display(_safe_title(title_text)), drop_headings=True
+            )
+        )
         # Apply font with title size multiplier
         if zh:
             r.font.name = self.cfg.font_zh.name
-            r.font.size = Pt(self.cfg.font_zh.size_pt * float(self.cfg.title_size_multiplier or 1.0))
+            r.font.size = Pt(
+                self.cfg.font_zh.size_pt * float(self.cfg.title_size_multiplier or 1.0)
+            )
             try:
-                r._element.rPr.rFonts.set(qn('w:eastAsia'), 'SimSun')
+                r._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
             except Exception:
                 pass
         else:
             r.font.name = self.cfg.font_en.name
-            r.font.size = Pt(self.cfg.font_en.size_pt * float(self.cfg.title_size_multiplier or 1.0))
-        r.font.bold = bool(getattr(self.cfg, 'title_bold', True))
+            r.font.size = Pt(
+                self.cfg.font_en.size_pt * float(self.cfg.title_size_multiplier or 1.0)
+            )
+        r.font.bold = bool(getattr(self.cfg, "title_bold", True))
 
     def _write_block(self, doc: Document, paras: List[str], zh: bool) -> None:
         prev_text: str | None = None
@@ -190,13 +198,15 @@ class DocumentWriter:
         doc.save(output_path)
         return output_path
 
-    def write_per_article(self, processed: Dict[str, Any], output_dir: str | None = None) -> List[str]:
+    def write_per_article(
+        self, processed: Dict[str, Any], output_dir: str | None = None
+    ) -> List[str]:
         """Write one DOCX per article with required formatting and naming by Chinese title."""
         articles = processed.get("articles", []) if isinstance(processed, dict) else []
         if not articles:
             raise ValueError("Empty processed result; cannot export DOCX")
 
-        base = Path(output_dir) if output_dir else Path('.')
+        base = Path(output_dir) if output_dir else Path(".")
         base.mkdir(parents=True, exist_ok=True)
         out_paths: List[str] = []
         used: set[str] = set()
@@ -204,8 +214,8 @@ class DocumentWriter:
         def _filename_from_title(name: str) -> str:
             s = (_sanitize_title_for_display(_safe_title(name)) or "Untitled").strip()
             for ch in '\\/:*?"<>|':
-                s = s.replace(ch, ' ')
-            s = ' '.join(s.split())
+                s = s.replace(ch, " ")
+            s = " ".join(s.split())
             s = s[:80]
             stem = s or "Untitled"
             candidate = stem

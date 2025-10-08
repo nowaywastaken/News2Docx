@@ -13,7 +13,9 @@ except Exception:  # optional dependency
 
 def _load_yaml(p: Path) -> Dict[str, Any]:
     if yaml is None:
-        raise RuntimeError("PyYAML 未安装，无法读取 YAML 配置。请 `pip install pyyaml` 或改用 JSON 配置文件。")
+        raise RuntimeError(
+            "PyYAML 未安装，无法读取 YAML 配置。请 `pip install pyyaml` 或改用 JSON 配置文件。"
+        )
     with p.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
@@ -81,4 +83,3 @@ def merge_config(*sources: Dict[str, Any]) -> Dict[str, Any]:
             if v is not None:
                 out[k] = v
     return out
-

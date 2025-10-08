@@ -1,5 +1,7 @@
 __pycache__
 config.yml
+.config.toml
+config.toml
 .n2d_cache
 runs
 logs

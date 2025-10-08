@@ -7,24 +7,30 @@ from typing import Optional
 
 import typer
 
+from news2docx.cli.common import ensure_openai_env
+from news2docx.core.config import load_config_file, load_env, merge_config
+from news2docx.core.utils import ensure_directory, now_stamp
+from news2docx.infra.logging import init_logging
+from news2docx.process.engine import Article as ProcArticle
 from news2docx.scrape.runner import (
-    ScrapeConfig as ScrapeConfig,
-    NewsScraper as NewsScraper,
     DEFAULT_CRAWLER_API_URL,
     save_scraped_data_to_json,
 )
-from news2docx.process.engine import Article as ProcArticle
-from news2docx.core.config import load_config_file, load_env, merge_config
-from news2docx.core.utils import now_stamp, ensure_directory
-from news2docx.cli.common import ensure_openai_env
+from news2docx.scrape.runner import (
+    NewsScraper as NewsScraper,
+)
+from news2docx.scrape.runner import (
+    ScrapeConfig as ScrapeConfig,
+)
 from news2docx.services.processing import (
     articles_from_json,
     articles_from_scraped,
+)
+from news2docx.services.processing import (
     process_articles as svc_process_articles,
 )
-from news2docx.services.runs import runs_base_dir, latest_run_dir, clean_runs as svc_clean_runs
-from news2docx.infra.logging import init_logging
-
+from news2docx.services.runs import clean_runs as svc_clean_runs
+from news2docx.services.runs import latest_run_dir, runs_base_dir
 
 app = typer.Typer(help="News2Docx CLI: scrape, process, run, export")
 
@@ -63,7 +69,9 @@ def scrape(
     per_url_retries: Optional[int] = typer.Option(None, "--per-url-retries", min=0),
     pick_mode: Optional[str] = typer.Option(None, "--pick-mode", case_sensitive=False),
     random_seed: Optional[int] = typer.Option(None, "--random-seed"),
-    config: Optional[Path] = typer.Option(None, "--config", exists=True, dir_okay=False, readable=True),
+    config: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, readable=True
+    ),
 ) -> None:
     """Scrape news URLs and save results to a JSON file."""
     conf = merge_config(
@@ -92,24 +100,39 @@ def scrape(
     mode = str(conf.get("crawler_mode") or os.getenv("CRAWLER_MODE") or "remote").lower()
     token = conf.get("crawler_api_token") or os.getenv("CRAWLER_API_TOKEN")
     if mode == "remote" and not token:
-        typer.secho("Missing CRAWLER_API_TOKEN (remote mode). Use --api-token or set env, or switch to local mode.", fg=typer.colors.RED)
+        typer.secho(
+            "Missing CRAWLER_API_TOKEN (remote mode). Use --api-token or set env, or switch to local mode.",
+            fg=typer.colors.RED,
+        )
         raise typer.Exit(code=2)
 
     cfg = ScrapeConfig(
         api_url=conf.get("crawler_api_url") or DEFAULT_CRAWLER_API_URL,
         api_token=token,
         mode=mode,
-        sites_file=(conf.get("crawler_sites_file") or os.getenv("CRAWLER_SITES_FILE") or str(Path.cwd() / "server" / "news_website.txt")),
+        sites_file=(
+            conf.get("crawler_sites_file")
+            or os.getenv("CRAWLER_SITES_FILE")
+            or str(Path.cwd() / "server" / "news_website.txt")
+        ),
         gdelt_timespan=(conf.get("gdelt_timespan") or os.getenv("GDELT_TIMESPAN") or "7d"),
-        gdelt_max_per_call=int(conf.get("gdelt_max_per_call") or os.getenv("GDELT_MAX_PER_CALL") or 50),
+        gdelt_max_per_call=int(
+            conf.get("gdelt_max_per_call") or os.getenv("GDELT_MAX_PER_CALL") or 50
+        ),
         gdelt_sort=(conf.get("gdelt_sort") or os.getenv("GDELT_SORT") or "datedesc"),
         max_urls=int(conf.get("max_urls") or 1),
         concurrency=int(conf.get("concurrency") or 4),
         timeout=int(conf.get("timeout") or 30),
         pick_mode=str(conf.get("pick_mode") or "random"),
         random_seed=(int(conf.get("random_seed")) if conf.get("random_seed") is not None else None),
-        db_path=str(conf.get("db_path") or os.getenv("N2D_DB_PATH") or (Path.cwd() / ".n2d_cache" / "crawled.sqlite3")),
-        noise_patterns=(conf.get("noise_patterns") if isinstance(conf.get("noise_patterns"), list) else None),
+        db_path=str(
+            conf.get("db_path")
+            or os.getenv("N2D_DB_PATH")
+            or (Path.cwd() / ".n2d_cache" / "crawled.sqlite3")
+        ),
+        noise_patterns=(
+            conf.get("noise_patterns") if isinstance(conf.get("noise_patterns"), list) else None
+        ),
     )
 
     ns = NewsScraper(cfg)
@@ -125,8 +148,12 @@ def scrape(
 @app.command()
 def process(
     input_json: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    target_language: Optional[str] = typer.Option(None, "--target-language", help="Target language"),
-    config: Optional[Path] = typer.Option(None, "--config", exists=True, dir_okay=False, readable=True),
+    target_language: Optional[str] = typer.Option(
+        None, "--target-language", help="Target language"
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, readable=True
+    ),
 ) -> None:
     """Process scraped JSON using a two-step AI pipeline and output JSON."""
     with input_json.open("r", encoding="utf-8") as f:
@@ -161,13 +188,29 @@ def run(
     per_url_retries: Optional[int] = typer.Option(None, "--per-url-retries", min=0),
     pick_mode: Optional[str] = typer.Option(None, "--pick-mode", case_sensitive=False),
     random_seed: Optional[int] = typer.Option(None, "--random-seed"),
-    target_language: Optional[str] = typer.Option(None, "--target-language", help="Target language"),
-    export_docx: Optional[bool] = typer.Option(None, "--export/--no-export", help="Export DOCX after processing (can be set via config: run_export)"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="DOCX output file (single) or directory when splitting"),
-    order: Optional[str] = typer.Option(None, "--order", help="Paragraph order: zh-en or en-zh (with --export)"),
+    target_language: Optional[str] = typer.Option(
+        None, "--target-language", help="Target language"
+    ),
+    export_docx: Optional[bool] = typer.Option(
+        None,
+        "--export/--no-export",
+        help="Export DOCX after processing (can be set via config: run_export)",
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="DOCX output file (single) or directory when splitting"
+    ),
+    order: Optional[str] = typer.Option(
+        None, "--order", help="Paragraph order: zh-en or en-zh (with --export)"
+    ),
     mono: Optional[bool] = typer.Option(None, "--mono", help="Chinese only (with --export)"),
-    split: Optional[bool] = typer.Option(None, "--split/--no-split", help="Export one DOCX per article (can be set via config: export_split; defaults to True)"),
-    config: Optional[Path] = typer.Option(None, "--config", exists=True, dir_okay=False, readable=True),
+    split: Optional[bool] = typer.Option(
+        None,
+        "--split/--no-split",
+        help="Export one DOCX per article (can be set via config: export_split; defaults to True)",
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, readable=True
+    ),
 ) -> None:
     """End-to-end: scrape and two-step AI processing; optional DOCX export."""
     conf = merge_config(
@@ -199,7 +242,10 @@ def run(
     mode = str(conf.get("crawler_mode") or os.getenv("CRAWLER_MODE") or "remote").lower()
     token = conf.get("crawler_api_token") or os.getenv("CRAWLER_API_TOKEN")
     if mode == "remote" and not token:
-        typer.secho("Missing CRAWLER_API_TOKEN (remote mode). Use --api-token or set env, or switch to local mode.", fg=typer.colors.RED)
+        typer.secho(
+            "Missing CRAWLER_API_TOKEN (remote mode). Use --api-token or set env, or switch to local mode.",
+            fg=typer.colors.RED,
+        )
         raise typer.Exit(code=2)
 
     run_id = _ts()
@@ -209,17 +255,29 @@ def run(
         api_url=conf.get("crawler_api_url") or DEFAULT_CRAWLER_API_URL,
         api_token=token,
         mode=mode,
-        sites_file=(conf.get("crawler_sites_file") or os.getenv("CRAWLER_SITES_FILE") or str(Path.cwd() / "server" / "news_website.txt")),
+        sites_file=(
+            conf.get("crawler_sites_file")
+            or os.getenv("CRAWLER_SITES_FILE")
+            or str(Path.cwd() / "server" / "news_website.txt")
+        ),
         gdelt_timespan=(conf.get("gdelt_timespan") or os.getenv("GDELT_TIMESPAN") or "7d"),
-        gdelt_max_per_call=int(conf.get("gdelt_max_per_call") or os.getenv("GDELT_MAX_PER_CALL") or 50),
+        gdelt_max_per_call=int(
+            conf.get("gdelt_max_per_call") or os.getenv("GDELT_MAX_PER_CALL") or 50
+        ),
         gdelt_sort=(conf.get("gdelt_sort") or os.getenv("GDELT_SORT") or "datedesc"),
         max_urls=int(conf.get("max_urls") or 1),
         concurrency=int(conf.get("concurrency") or 4),
         timeout=int(conf.get("timeout") or 30),
         pick_mode=str(conf.get("pick_mode") or "random"),
         random_seed=(int(conf.get("random_seed")) if conf.get("random_seed") is not None else None),
-        db_path=str(conf.get("db_path") or os.getenv("N2D_DB_PATH") or (Path.cwd() / ".n2d_cache" / "crawled.sqlite3")),
-        noise_patterns=(conf.get("noise_patterns") if isinstance(conf.get("noise_patterns"), list) else None),
+        db_path=str(
+            conf.get("db_path")
+            or os.getenv("N2D_DB_PATH")
+            or (Path.cwd() / ".n2d_cache" / "crawled.sqlite3")
+        ),
+        noise_patterns=(
+            conf.get("noise_patterns") if isinstance(conf.get("noise_patterns"), list) else None
+        ),
     )
 
     ns = NewsScraper(cfg)
@@ -246,20 +304,28 @@ def run(
     _echo(f"Saved processed JSON: {processed_path}")
 
     # Determine export and split flags from CLI or config
-    export_flag = export_docx if export_docx is not None else bool(
-        conf.get("run_export") or conf.get("export_auto") or conf.get("export")
+    export_flag = (
+        export_docx
+        if export_docx is not None
+        else bool(conf.get("run_export") or conf.get("export_auto") or conf.get("export"))
     )
-    split_flag = split if split is not None else bool(
-        conf.get("export_split") if conf.get("export_split") is not None else True
+    split_flag = (
+        split
+        if split is not None
+        else bool(conf.get("export_split") if conf.get("export_split") is not None else True)
     )
 
     if export_flag:
         export_conf = merge_config(
             load_config_file(config),
             load_env(),
-            {"export_order": (order.lower() if isinstance(order, str) else order), "export_mono": mono},
+            {
+                "export_order": (order.lower() if isinstance(order, str) else order),
+                "export_mono": mono,
+            },
         )
         from news2docx.services.exporting import export_processed
+
         res = export_processed(
             processed_path,
             export_conf,
@@ -275,27 +341,46 @@ def run(
 
 @app.command()
 def export(
-    processed_json: Optional[Path] = typer.Argument(None, exists=True, dir_okay=False, readable=True),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="DOCX output file (single) or directory when splitting"),
+    processed_json: Optional[Path] = typer.Argument(
+        None, exists=True, dir_okay=False, readable=True
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="DOCX output file (single) or directory when splitting"
+    ),
     order: Optional[str] = typer.Option(None, "--order", help="Paragraph order: zh-en or en-zh"),
     mono: Optional[bool] = typer.Option(None, "--mono", help="Chinese only, no English"),
-    split: Optional[bool] = typer.Option(None, "--split/--no-split", help="Export one DOCX per article (can be set via config: export_split; defaults to True)"),
-    config: Optional[Path] = typer.Option(None, "--config", exists=True, dir_okay=False, readable=True),
+    split: Optional[bool] = typer.Option(
+        None,
+        "--split/--no-split",
+        help="Export one DOCX per article (can be set via config: export_split; defaults to True)",
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, readable=True
+    ),
 ) -> None:
     """Export a DOCX document from processed JSON."""
     if processed_json is None:
         base_dir = runs_base_dir()
-        runs = sorted((base_dir.glob("*/processed.json")), key=lambda p: p.stat().st_mtime, reverse=True)
+        runs = sorted(
+            (base_dir.glob("*/processed.json")), key=lambda p: p.stat().st_mtime, reverse=True
+        )
         if not runs:
-            typer.secho("No runs/*/processed.json found; please provide a path.", fg=typer.colors.RED)
+            typer.secho(
+                "No runs/*/processed.json found; please provide a path.", fg=typer.colors.RED
+            )
             raise typer.Exit(code=2)
         processed_json = runs[0]
     ts = _ts()
-    conf = merge_config(load_config_file(config), load_env(), {
-        "export_order": (order.lower() if isinstance(order, str) else order),
-        "export_mono": mono,
-    })
+    conf = merge_config(
+        load_config_file(config),
+        load_env(),
+        {
+            "export_order": (order.lower() if isinstance(order, str) else order),
+            "export_mono": mono,
+        },
+    )
     from news2docx.services.exporting import export_processed
+
     res = export_processed(
         processed_json,
         conf,
@@ -311,7 +396,9 @@ def export(
 
 @app.command()
 def doctor(
-    config: Optional[Path] = typer.Option(None, "--config", exists=True, dir_okay=False, readable=True)
+    config: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, readable=True
+    )
 ) -> None:
     """Check required env vars and endpoint reachability (no real calls)."""
     import requests
@@ -324,15 +411,21 @@ def doctor(
     oa_key = os.getenv("OPENAI_API_KEY")
     mode = str(conf.get("crawler_mode") or os.getenv("CRAWLER_MODE") or "remote").lower()
     crawler_token = os.getenv("CRAWLER_API_TOKEN") or str(conf.get("crawler_api_token") or "")
-    crawler_url = os.getenv("CRAWLER_API_URL") or str(conf.get("crawler_api_url") or "https://gdelt-xupojkickl.cn-hongkong.fcapp.run")
+    crawler_url = os.getenv("CRAWLER_API_URL") or str(
+        conf.get("crawler_api_url") or "https://gdelt-xupojkickl.cn-hongkong.fcapp.run"
+    )
     # Determine OpenAI-Compatible chat completions URL
-    base = os.getenv("OPENAI_API_BASE") or str(conf.get("openai_api_base") or "https://api.siliconflow.cn/v1")
+    base = os.getenv("OPENAI_API_BASE") or str(
+        conf.get("openai_api_base") or "https://api.siliconflow.cn/v1"
+    )
     full_url_override = os.getenv("OPENAI_API_URL")
     chat_url = full_url_override or (base.rstrip("/") + "/chat/completions")
 
     if mode == "remote" and not crawler_token:
         ok = False
-        typer.secho("CRAWLER_API_TOKEN is not set (env or config, remote mode)", fg=typer.colors.YELLOW)
+        typer.secho(
+            "CRAWLER_API_TOKEN is not set (env or config, remote mode)", fg=typer.colors.YELLOW
+        )
     if not oa_key:
         ok = False
         typer.secho("OPENAI_API_KEY is not set (env or config)", fg=typer.colors.YELLOW)
@@ -382,7 +475,9 @@ def stats() -> None:
 
 
 @app.command()
-def clean(keep: int = typer.Option(3, '--keep', min=0, help='Keep the latest N runs/* directories')) -> None:
+def clean(
+    keep: int = typer.Option(3, "--keep", min=0, help="Keep the latest N runs/* directories")
+) -> None:
     """Remove old runs directories, keeping the most recent N."""
     base = runs_base_dir()
     deleted = svc_clean_runs(base, keep)
@@ -392,41 +487,43 @@ def clean(keep: int = typer.Option(3, '--keep', min=0, help='Keep the latest N r
 
 @app.command()
 def resume(
-    target_language: Optional[str] = typer.Option(None, '--target-language'),
-    config: Optional[Path] = typer.Option(None, '--config', exists=True, dir_okay=False, readable=True),
+    target_language: Optional[str] = typer.Option(None, "--target-language"),
+    config: Optional[Path] = typer.Option(
+        None, "--config", exists=True, dir_okay=False, readable=True
+    ),
 ) -> None:
     """Resume from latest runs/<run_id>: if processed.json is missing, process scraped.json to generate it."""
     base = runs_base_dir()
     latest = latest_run_dir(base)
     if not latest:
-        typer.secho('No runs/* directories found', fg=typer.colors.YELLOW)
+        typer.secho("No runs/* directories found", fg=typer.colors.YELLOW)
         raise typer.Exit(code=1)
-    scraped_path = latest / 'scraped.json'
-    processed = latest / 'processed.json'
+    scraped_path = latest / "scraped.json"
+    processed = latest / "processed.json"
     if processed.exists():
         typer.echo(f"Already exists: {processed}")
         raise typer.Exit(code=0)
     conf = merge_config(load_config_file(config), load_env(), {"target_language": target_language})
-    data = json.loads(scraped_path.read_text(encoding='utf-8'))
+    data = json.loads(scraped_path.read_text(encoding="utf-8"))
     arts = articles_from_json(data)
     res = svc_process_articles(arts, conf)
-    processed.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding='utf-8')
+    processed.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
     typer.echo(f"Resume processing done: {processed}")
 
 
 @app.command()
 def combine(
     inputs: list[Path] = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    output: Optional[Path] = typer.Option(None, '--output', '-o'),
+    output: Optional[Path] = typer.Option(None, "--output", "-o"),
 ) -> None:
     """Combine multiple processed_news_*.json files into one."""
     merged = {"articles": [], "metadata": {"combined": len(inputs)}}
     for p in inputs:
-        d = json.loads(p.read_text(encoding='utf-8'))
-        if isinstance(d, dict) and 'articles' in d:
-            merged['articles'].extend(d['articles'])
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(d, dict) and "articles" in d:
+            merged["articles"].extend(d["articles"])
     out = output or Path(f"processed_combined_{_ts()}.json")
-    out.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding='utf-8')
+    out.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
     typer.echo(f"Combined into: {out}")
 
 
@@ -436,5 +533,3 @@ def main() -> None:  # console_scripts entrypoint wrapper
 
 if __name__ == "__main__":
     main()
-
-

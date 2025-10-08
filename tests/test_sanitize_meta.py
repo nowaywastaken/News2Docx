@@ -21,4 +21,3 @@ def test_sanitize_meta_datetime_pattern():
     assert "September 30" not in cleaned
     assert removed == 1
     assert any(k.startswith("pattern:") for k in kinds)
-

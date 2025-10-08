@@ -16,14 +16,14 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from news2docx.infra.secure_config import secure_load_config
-from news2docx.infra.logging import init_logging, unified_print
 from news2docx.cli.common import ensure_openai_env
-
+from news2docx.infra.logging import init_logging, unified_print
+from news2docx.infra.secure_config import secure_load_config
 
 # ---------------- Configuration & Logging ----------------
+
 
 def load_app_config(config_path: str) -> Dict[str, Any]:
     """Load application configuration via secure loader.
@@ -66,15 +66,20 @@ def prepare_logging(log_file: str) -> None:
 
 # ---------------- Orchestration (scrape -> process -> export) ----------------
 
+
 def run_scrape(conf: Dict[str, Any]) -> str:
     """Run scraping according to configuration and return saved JSON path."""
+    from news2docx.core.utils import now_stamp
     from news2docx.scrape.runner import (
-        ScrapeConfig as ScrapeConfig,
-        NewsScraper as NewsScraper,
         DEFAULT_CRAWLER_API_URL,
         save_scraped_data_to_json,
     )
-    from news2docx.core.utils import now_stamp
+    from news2docx.scrape.runner import (
+        NewsScraper as NewsScraper,
+    )
+    from news2docx.scrape.runner import (
+        ScrapeConfig as ScrapeConfig,
+    )
 
     ensure_openai_env(conf)
 
@@ -84,7 +89,9 @@ def run_scrape(conf: Dict[str, Any]) -> str:
         api_url=conf.get("crawler_api_url") or DEFAULT_CRAWLER_API_URL,
         api_token=token,
         mode=mode,
-        sites_file=(conf.get("crawler_sites_file") or str(Path.cwd() / "server" / "news_website.txt")),
+        sites_file=(
+            conf.get("crawler_sites_file") or str(Path.cwd() / "server" / "news_website.txt")
+        ),
         gdelt_timespan=(conf.get("gdelt_timespan") or "7d"),
         gdelt_max_per_call=int(conf.get("gdelt_max_per_call") or 50),
         gdelt_sort=(conf.get("gdelt_sort") or "datedesc"),
@@ -94,7 +101,9 @@ def run_scrape(conf: Dict[str, Any]) -> str:
         pick_mode=str(conf.get("pick_mode") or "random"),
         random_seed=(int(conf.get("random_seed")) if conf.get("random_seed") is not None else None),
         db_path=str(conf.get("db_path") or (Path.cwd() / ".n2d_cache" / "crawled.sqlite3")),
-        noise_patterns=(conf.get("noise_patterns") if isinstance(conf.get("noise_patterns"), list) else None),
+        noise_patterns=(
+            conf.get("noise_patterns") if isinstance(conf.get("noise_patterns"), list) else None
+        ),
     )
     unified_print("scrape start", "ui", "scrape", level="info")
     ns = NewsScraper(cfg)
@@ -109,11 +118,14 @@ def run_process(conf: Dict[str, Any], scraped_json_path: Optional[str]) -> str:
     """Process articles either from scraped JSON or latest run, return processed.json path."""
     import json
     from pathlib import Path
+
     from news2docx.services.processing import (
         articles_from_json,
+    )
+    from news2docx.services.processing import (
         process_articles as svc_process_articles,
     )
-    from news2docx.services.runs import runs_base_dir, new_run_dir
+    from news2docx.services.runs import new_run_dir, runs_base_dir
 
     unified_print("process start", "ui", "process", level="info")
     if scraped_json_path is None:
@@ -125,7 +137,9 @@ def run_process(conf: Dict[str, Any], scraped_json_path: Optional[str]) -> str:
     missing: list[str] = []
     if not (os.getenv("OPENAI_API_KEY") or conf.get("openai_api_key")):
         missing.append("openai_api_key")
-    if not (os.getenv("OPENAI_API_BASE") or conf.get("openai_api_base") or os.getenv("OPENAI_API_URL")):
+    if not (
+        os.getenv("OPENAI_API_BASE") or conf.get("openai_api_base") or os.getenv("OPENAI_API_URL")
+    ):
         missing.append("openai_api_base")
     if not conf.get("openai_model"):
         missing.append("openai_model")
@@ -163,12 +177,15 @@ def run_process(conf: Dict[str, Any], scraped_json_path: Optional[str]) -> str:
 def run_export(conf: Dict[str, Any], processed_json_path: str) -> str:
     """Export DOCX from processed payload and return target path or directory."""
     from pathlib import Path as P
+
     from news2docx.core.utils import now_stamp
     from news2docx.services.exporting import export_processed
 
     unified_print("export start", "ui", "export", level="info")
     ts = now_stamp()
-    res = export_processed(P(processed_json_path), conf, output=None, split=None, default_filename=f"news_{ts}.docx")
+    res = export_processed(
+        P(processed_json_path), conf, output=None, split=None, default_filename=f"news_{ts}.docx"
+    )
     if res.get("split"):
         # return directory when split
         out_dir = str(P(res["paths"][0]).parent) if res.get("paths") else ""
@@ -183,28 +200,31 @@ def run_export(conf: Dict[str, Any], processed_json_path: str) -> str:
 
 # ---------------- UI ----------------
 
+
 class _QtUnavailable(Exception):
     pass
 
 
 # ---------------- Bootstrap ----------------
 
+
 def run_app() -> None:
     # Lazy import Qt to avoid hard dependency at import time (for tests)
     try:
-        from PyQt6.QtCore import Qt, QTimer, QCoreApplication
-        from PyQt6.QtGui import QIcon, QGuiApplication
-        from PyQt6.QtWidgets import (
-            QApplication,
-            QWidget,
-            QPushButton,
-            QLabel,
-            QTextEdit,
-            QStackedLayout,
-            QFormLayout,
-        )
         # Ensure Path is available to inner methods via closure to avoid NameError in threads
         from pathlib import Path as Path  # shadow module-level safely for closures
+
+        from PyQt6.QtCore import QCoreApplication, Qt, QTimer
+        from PyQt6.QtGui import QGuiApplication, QIcon
+        from PyQt6.QtWidgets import (
+            QApplication,
+            QFormLayout,
+            QLabel,
+            QPushButton,
+            QStackedLayout,
+            QTextEdit,
+            QWidget,
+        )
     except Exception as e:
         raise _QtUnavailable("PyQt6 is required to run the UI. Please install requirements.") from e
 
@@ -220,12 +240,16 @@ def run_app() -> None:
             super().__init__()
             # Ensure Path is available in method scope to avoid NameError in some runtimes
             from pathlib import Path
+
             self.config = config
             self.setWindowTitle(str(config.get("app", {}).get("name") or "News2Docx UI"))
             icon_path = Path("assets/app.ico")
             if icon_path.exists():
                 self.setWindowIcon(QIcon(str(icon_path)))
-            self.setFixedSize(int(config.get("ui", {}).get("fixed_width") or 350), int(config.get("ui", {}).get("fixed_height") or 600))
+            self.setFixedSize(
+                int(config.get("ui", {}).get("fixed_width") or 350),
+                int(config.get("ui", {}).get("fixed_height") or 600),
+            )
 
             theme = config.get("ui", {}).get("theme") or {}
             self._primary = str(theme.get("primary_color") or "#4C7DFF")
@@ -249,6 +273,7 @@ def run_app() -> None:
             self.input_count = QLabel("数量", self)
             self.input_count.setGeometry(170, 36, 28, 24)
             from PyQt6.QtWidgets import QLineEdit
+
             self.input_count_edit = QLineEdit(self)
             self.input_count_edit.setGeometry(200, 36, 54, 24)
             self.input_count_edit.setPlaceholderText("1,2,3...")
@@ -276,10 +301,14 @@ def run_app() -> None:
 
         def _build_home_page(self) -> QWidget:
             from pathlib import Path
+
             page = QWidget()
 
             # Contact info (replaces previous "应用" row)
-            contact = QLabel("<a href='mailto:nowaywastaken@outlook.com'>联系开发者：nowaywastaken@outlook.com</a>", page)
+            contact = QLabel(
+                "<a href='mailto:nowaywastaken@outlook.com'>联系开发者：nowaywastaken@outlook.com</a>",
+                page,
+            )
             contact.setGeometry(0, 0, 318, 36)
             contact.setOpenExternalLinks(True)
 
@@ -287,7 +316,9 @@ def run_app() -> None:
             # Expand log area upward a bit (start higher, taller)
             self.log_view.setGeometry(0, 40, 318, 464)
             self.log_view.setReadOnly(True)
-            self.log_view.setStyleSheet("background-color: #ffffff; border: 1px solid #e5e7eb; font-family: Consolas, monospace; font-size: 11px;")
+            self.log_view.setStyleSheet(
+                "background-color: #ffffff; border: 1px solid #e5e7eb; font-family: Consolas, monospace; font-size: 11px;"
+            )
 
             # Terminal log entry links
             self.link_open_log = QLabel("<a href='#openlog'>打开日志文件</a>", page)
@@ -310,29 +341,30 @@ def run_app() -> None:
 
         def _build_settings_page(self, conf: Dict[str, Any]) -> QWidget:
             # Editable settings grouped into categories with pagination via QStackedLayout
-            from PyQt6.QtWidgets import QLineEdit
+
             import yaml
-            from pathlib import Path  # for any future path usage
+            from PyQt6.QtWidgets import QLineEdit
 
             page = QWidget()
             # Category links (absolute positioning)
             cat_bar = QWidget(page)
             cat_bar.setGeometry(0, 0, 318, 22)
+            # Only expose minimal settings in UI:
+            # - Scrape: only mode, service URL, token, noise keywords
+            # - Process / Export remain visible
+            # Hidden: 应用(app), 界面(ui), 其他(other)
             cats = [
-                ("应用", "app"),
-                ("界面", "ui"),
                 ("抓取", "scrape"),
                 ("处理", "process"),
                 ("导出", "export"),
-                ("其他", "other"),
             ]
             self._cat_links: list[QLabel] = []
             x = 0
             for i, (label, _k) in enumerate(cats):
-                l = QLabel(f"<a href='#cat{i}'>{label}</a>", cat_bar)
-                l.setGeometry(x, 0, 50, 20)
-                l.setOpenExternalLinks(False)
-                self._cat_links.append(l)
+                link = QLabel(f"<a href='#cat{i}'>{label}</a>", cat_bar)
+                link.setGeometry(x, 0, 50, 20)
+                link.setOpenExternalLinks(False)
+                self._cat_links.append(link)
                 x += 52
 
             # Pages container
@@ -416,11 +448,29 @@ def run_app() -> None:
                     return "ui"
                 if key.startswith("export_") or key in {"run_export"}:
                     return "export"
-                if key.startswith("openai_") or key in {"target_language", "merge_short_paragraph_chars"}:
-                    return "process"
-                if key.startswith("crawler_") or key.startswith("gdelt_") or key in {
-                    "max_urls","concurrency","retry_hours","timeout","strict_success","max_api_rounds","per_url_retries","pick_mode","random_seed","db_path","noise_patterns"
+                if key.startswith("openai_") or key in {
+                    "target_language",
+                    "merge_short_paragraph_chars",
                 }:
+                    return "process"
+                if (
+                    key.startswith("crawler_")
+                    or key.startswith("gdelt_")
+                    or key
+                    in {
+                        "max_urls",
+                        "concurrency",
+                        "retry_hours",
+                        "timeout",
+                        "strict_success",
+                        "max_api_rounds",
+                        "per_url_retries",
+                        "pick_mode",
+                        "random_seed",
+                        "db_path",
+                        "noise_patterns",
+                    }
+                ):
                     return "scrape"
                 return "other"
 
@@ -429,25 +479,39 @@ def run_app() -> None:
             for key, val in pairs:
                 groups.setdefault(categorize(key), []).append((key, val))
 
-            # Build each category page
+            # Build each category page (with filtering rules applied)
             cat_to_index: dict[str, int] = {}
             for cat_key in [c[1] for c in cats]:
                 w = QWidget()
                 f = QFormLayout()
                 f.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
                 w.setLayout(f)
-                for key, val in groups.get(cat_key, []):
+                pairs_in_cat = list(groups.get(cat_key, []))
+                if cat_key == "scrape":
+                    allowed = {
+                        "crawler_mode",
+                        "crawler_api_url",
+                        "crawler_api_token",
+                        "noise_patterns",
+                    }
+                    pairs_in_cat = [(k, v) for (k, v) in pairs_in_cat if k in allowed]
+                elif cat_key in {"app", "ui", "other"}:
+                    pairs_in_cat = []
+
+                for key, val in pairs_in_cat:
                     editor = QLineEdit(w)
                     editor.setText(str(val))
-                    editor.editingFinished.connect(lambda k=key, e=editor: self._on_conf_changed(k, e.text()))
+                    editor.editingFinished.connect(
+                        lambda k=key, e=editor: self._on_conf_changed(k, e.text())
+                    )
                     f.addRow(QLabel(_label_for(key)), editor)
                     self._editors[key] = editor
                 cat_to_index[cat_key] = sub_stack.count()
                 sub_stack.addWidget(w)
 
             # Link handlers
-            for i, l in enumerate(self._cat_links):
-                l.linkActivated.connect(lambda _=None, idx=i: sub_stack.setCurrentIndex(idx))
+            for i, link in enumerate(self._cat_links):
+                link.linkActivated.connect(lambda _=None, idx=i: sub_stack.setCurrentIndex(idx))
 
             self._yaml_dump = lambda data: yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
             return page
@@ -458,7 +522,11 @@ def run_app() -> None:
                     # Override max_urls by UI input if provided
                     cfg = dict(self.config)
                     try:
-                        n = int(self.input_count_edit.text().strip()) if self.input_count_edit.text().strip() else None
+                        n = (
+                            int(self.input_count_edit.text().strip())
+                            if self.input_count_edit.text().strip()
+                            else None
+                        )
                         if n and n > 0:
                             cfg["max_urls"] = n
                     except Exception:
@@ -471,6 +539,7 @@ def run_app() -> None:
 
         def _find_latest(self, pattern: str) -> Optional[str]:
             from pathlib import Path
+
             paths = sorted(Path.cwd().glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
             return str(paths[0]) if paths else None
 
@@ -516,6 +585,7 @@ def run_app() -> None:
 
         def _poll_log(self) -> None:
             from pathlib import Path
+
             try:
                 p = Path(self._log_path)
                 if not p.exists():
@@ -538,20 +608,23 @@ def run_app() -> None:
         def _open_log_file(self) -> None:
             try:
                 import webbrowser
+
                 webbrowser.open(self._log_path)
             except Exception:
                 pass
 
         def _open_terminal_log(self) -> None:
             try:
-                import subprocess, platform
+                import platform
+                import subprocess
+
                 logp = self._log_path
                 if platform.system().lower().startswith("win"):
                     CREATE_NEW_CONSOLE = 0x00000010
                     subprocess.Popen(["cmd", "/k", "type", logp], creationflags=CREATE_NEW_CONSOLE)
                 elif platform.system().lower() == "darwin":
                     # Open Terminal and tail log
-                    os.system(f"osascript -e 'tell app \"Terminal\" to do script \"tail -f {logp}\"'")
+                    os.system(f'osascript -e \'tell app "Terminal" to do script "tail -f {logp}"\'')
                 else:
                     subprocess.Popen(["x-terminal-emulator", "-e", "tail", "-f", logp])
             except Exception:
@@ -559,7 +632,9 @@ def run_app() -> None:
 
     # High DPI setup
     try:
-        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
     except Exception:
         pass
     try:

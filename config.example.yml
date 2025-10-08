@@ -1,103 +1,74 @@
+# News2Docx configuration example (copy to `config.yml` for use)
+# All values are plain text here; when using `config.yml`, sensitive fields are auto-encrypted at rest
+# by `news2docx.infra.secure_config.secure_load_config` via system keyring.
+
 app:
   name: "News2Docx UI"
 
 ui:
   fixed_width: 350
   fixed_height: 600
-  high_dpi: true
   initial_page: 0
   theme:
     primary_color: "#4C7DFF"
     background_color: "#F7F9FC"
     text_color: "#1F2937"
-    accent_color: "#10B981"
-  danger_color: "#EF4444"
 
-# 安全设置（字段级加密，推荐保持开启）
+# Security: field-level encryption (applies only to config.yml)
 security:
-  enable_encryption: true            # 启用字段级加密（仅在 config.yml 上持久化回写）
-  keyring_service: "News2Docx"       # 系统凭据库中的服务名
-  sensitive_keys:                     # 会在磁盘上加密保存的字段（运行时自动解密）
+  enable_encryption: true
+  keyring_service: "News2Docx"
+  sensitive_keys:
     - openai_api_key
     - crawler_api_token
+    - crawler_api_url
 
-# News2Docx 示例配置（复制为 config.yml 后编辑）
-
-# 爬虫
-# crawler_mode: remote | local（默认：remote）
-crawler_mode: remote
-# 当 mode=remote 时
-crawler_api_url: "PUT_YOUR_CRAWLER_API_URL_HERE"
+# Scraper: choose ONE mode. Remote requires a token; Local uses GDELT with a sites list file.
+# Remote mode (recommended if you have a working endpoint + token)
+crawler_mode: remote   # remote | local
+crawler_api_url: "https://gdelt-xupojkickl.cn-hongkong.fcapp.run"
 crawler_api_token: "PUT_YOUR_CRAWLER_API_TOKEN_HERE"
-# 当 mode=local 时（直接访问 GDELT；中国大陆可能被屏蔽）
-crawler_sites_file: server/news_website.txt
-# 可选 GDELT 参数（本地模式）
-# gdelt_timespan: "7d"        # 例如：24h / 7d / 30d
-# gdelt_max_per_call: 50       # 每批数量
-# gdelt_sort: datedesc         # datedesc | dateasc（按日期降序/升序）
 
-# LLM（兼容 OpenAI 接口）
-openai_api_base: "PUT_YOUR_OPENAI_COMPATIBLE_API_BASE_URL_HERE"
+# Local mode (uncomment to use). Requires a domain list file; one domain per line.
+# crawler_mode: local
+# crawler_sites_file: server/news_website.txt
+# gdelt_timespan: "7d"             # e.g., 7d, 24h
+# gdelt_max_per_call: 50
+# gdelt_sort: datedesc              # datedesc | datedescdeprecated
+
+# Scrape controls
+max_urls: 1                         # number of URLs to process per run
+concurrency: 4                      # thread pool size
+timeout: 30                         # per-request timeout (seconds)
+pick_mode: random                   # random | top
+random_seed: null                   # integer or null
+db_path: ".n2d_cache/crawled.sqlite3"  # deduplicate previously processed URLs
+noise_patterns: []                  # extra noise filters (lowercase substrings)
+
+# Processing (OpenAI-compatible API). Model and API key are required.
+openai_api_base: "https://api.siliconflow.cn/v1"
 openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
-openai_model: "PUT_YOUR_OPENAI_COMPATIBLE_MODEL_ID_HERE"
+openai_model: "PUT_YOUR_MODEL_ID_HERE"      # e.g., gpt-4o-mini or vendor-specific
+target_language: "Chinese"                  # target translation language
+merge_short_paragraph_chars: 80             # merge very short English paragraphs before translation
 
-# 抓取
-max_urls: 3
-concurrency: 4
-retry_hours: 24
-timeout: 30
-strict_success: true
-max_api_rounds: 5
-per_url_retries: 2
-pick_mode: random          # random | top（选择方式）
-random_seed: 42            # 可选：固定随机种子
-db_path: .n2d_cache/crawled.sqlite3  # 存储已抓取的 URL，避免重复
-noise_patterns:            # 可选：在内置列表后追加站点噪声关键词
-  - "please refresh"
-  - "cookie"
+# Processing cleanup rules (line-wise filtering applied before export)
+processing_forbidden_prefixes: ["Note:", "Source:", "Copyright", "Image:"]
+processing_forbidden_patterns: ["^\u3010.*?\u3011.*$"]  # example: bracketed tags
+processing_min_words_after_clean: 200
 
-# 处理
-target_language: Chinese
-merge_short_paragraph_chars: 80   # 将短于该长度的英文段落与相邻短段合并
-
-# 导出
-run_export: true                 # 等价 CLI：--export
-export_split: true               # 等价 CLI：--split（每篇一个 DOCX）
-export_order: en-zh              # 等价 CLI：--order en-zh（英文在前）
-export_mono: false               # 设为 true 仅输出中文
-export_out_dir:                  # 可选；默认输出到“用户桌面/英文新闻”
+# Export settings
+export_split: true                   # true: per-article files; false: single DOCX
+export_order: zh-en                  # zh-en | en-zh (bilingual order if not mono)
+export_mono: false                   # true: only Chinese output
+export_out_dir: null                 # null => defaults to Desktop/英文新闻稿
 export_first_line_indent_cm: 0.74
-export_font_zh_name: 宋体
+export_font_zh_name: "SimSun"
 export_font_zh_size: 10.5
-export_font_en_name: Cambria
+export_font_en_name: "Cambria"
 export_font_en_size: 10.5
 export_title_bold: true
 export_title_size_multiplier: 1.0
 
-# 处理净化（可按需调整）
-processing_forbidden_prefixes:
-  - "Note:"
-  - "Editor's note"
-  - "作者："
-  - "来源："
-  - "发布于"
-  - "Updated"
-  - "Published"
-  - "CBS News"
-  - "CNN"
-  - "NYTimes"
-  - "The Verge"
-  - "A free daily digest"
-  - "This is the title for the native ad"
-  - "Posts from this author will be added"
-  - "Posts from this topic will be added"
-  - "Image:"
-  - "Photo:"
-  - "©"
-  - "All Rights Reserved"
-processing_forbidden_patterns:
-  - '(?i)^\s*(September|October|November|December|January|February|March|April|May|June|July|August)\s+\d{1,2},\s+\d{4}\s*/\s*\d{1,2}:\d{2}\s*(AM|PM)\s*[A-Z]{2,4}\s*/\s*([A-Za-z\s]+)$'
-  - '(?i)^\s*(Updated|Published)\s*:\s*.*$'
-  - '(?i)^\s*(By|作者)\s*:.*$'
-  - '(?i)^\s*(Source|来源)\s*:.*$'
-processing_min_words_after_clean: 200
+# Runs directory (where scraped/processed artifacts are stored)
+runs_dir: "runs"

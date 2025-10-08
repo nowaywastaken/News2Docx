@@ -1,7 +1,4 @@
-import os
-from pathlib import Path
-
-from news2docx.services.runs import runs_base_dir, clean_runs
+from news2docx.services.runs import clean_runs, runs_base_dir
 
 
 def test_runs_base_dir_env(tmp_path, monkeypatch):

@@ -13,4 +13,3 @@ def test_secure_load_does_not_modify_example(tmp_path):
     # Should not mutate example file
     after = example.read_text(encoding="utf-8")
     assert after == original
-

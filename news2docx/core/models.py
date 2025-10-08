@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any
 import time
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, List
 
 
 @dataclass
@@ -55,4 +55,3 @@ class ScrapeResult:
             "successful_urls": list(self.successful_urls),
             "failed_urls": list(self.failed_urls),
         }
-

@@ -8,7 +8,11 @@ from news2docx.core.utils import ensure_directory
 
 
 def runs_base_dir(conf: Optional[dict] = None) -> Path:
-    base = os.getenv("RUNS_DIR") or (conf.get("runs_dir") if isinstance(conf, dict) else None) or "runs"
+    base = (
+        os.getenv("RUNS_DIR")
+        or (conf.get("runs_dir") if isinstance(conf, dict) else None)
+        or "runs"
+    )
     return Path(str(base))
 
 
@@ -41,4 +45,3 @@ def clean_runs(base: Path, keep: int) -> List[Path]:
             # Ignore individual deletion failures; caller can log
             pass
     return deleted
-

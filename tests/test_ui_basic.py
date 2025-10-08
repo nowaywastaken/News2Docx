@@ -25,4 +25,3 @@ def test_prepare_logging_and_write(tmp_path):
     assert log_path.exists()
     content = log_path.read_text(encoding="utf-8")
     assert "hello" in content
-

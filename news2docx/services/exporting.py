@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from news2docx.export.docx import DocumentWriter, DocumentConfig, FontConfig
+from news2docx.export.docx import DocumentConfig, DocumentWriter, FontConfig
 
 
 def _desktop_outdir() -> Path:
@@ -41,7 +41,9 @@ def build_document_config(conf: Dict[str, Any]) -> DocumentConfig:
     return cfg
 
 
-def compute_export_targets(conf: Dict[str, Any], output: Optional[Path], default_filename: str) -> tuple[Path, Path]:
+def compute_export_targets(
+    conf: Dict[str, Any], output: Optional[Path], default_filename: str
+) -> tuple[Path, Path]:
     out_dir_cfg = conf.get("export_out_dir")
     export_dir = Path(str(out_dir_cfg)) if out_dir_cfg else _desktop_outdir()
     if output and output.suffix.lower() == ".docx":
@@ -51,7 +53,14 @@ def compute_export_targets(conf: Dict[str, Any], output: Optional[Path], default
     return export_dir, out_path
 
 
-def export_processed(data_or_path: Dict[str, Any] | Path, conf: Dict[str, Any], *, output: Optional[Path], split: Optional[bool], default_filename: str) -> Dict[str, Any]:
+def export_processed(
+    data_or_path: Dict[str, Any] | Path,
+    conf: Dict[str, Any],
+    *,
+    output: Optional[Path],
+    split: Optional[bool],
+    default_filename: str,
+) -> Dict[str, Any]:
     """Export processed payload to DOCX.
     Returns a dict: {"split": bool, "paths": List[str]} or {"split": False, "path": str}
     """
@@ -61,6 +70,7 @@ def export_processed(data_or_path: Dict[str, Any] | Path, conf: Dict[str, Any], 
         data = data_or_path
 
     cfg_doc = build_document_config(conf)
+
     # Last-mile sanitation on payload (avoid Note:/timestamps leaking into export)
     def _sanitize_linewise(text: str, prefixes: list, patterns: list) -> str:
         if not text:
@@ -68,6 +78,7 @@ def export_processed(data_or_path: Dict[str, Any] | Path, conf: Dict[str, Any], 
         lines = text.splitlines()
         out = []
         import re
+
         for ln in lines:
             s = ln.strip()
             dropped = False
@@ -94,19 +105,31 @@ def export_processed(data_or_path: Dict[str, Any] | Path, conf: Dict[str, Any], 
     prefixes = list(conf.get("processing_forbidden_prefixes") or [])
     patterns = list(conf.get("processing_forbidden_patterns") or [])
     try:
-        data = json.loads(data_or_path.read_text(encoding="utf-8")) if isinstance(data_or_path, Path) else dict(data_or_path)
+        data = (
+            json.loads(data_or_path.read_text(encoding="utf-8"))
+            if isinstance(data_or_path, Path)
+            else dict(data_or_path)
+        )
     except Exception:
         data = data_or_path if isinstance(data_or_path, dict) else {}
     if isinstance(data, dict):
         arts = data.get("articles") or []
         for a in arts:
             if isinstance(a, dict):
-                a["adjusted_content"] = _sanitize_linewise(a.get("adjusted_content") or "", prefixes, patterns)
-                a["translated_content"] = _sanitize_linewise(a.get("translated_content") or "", prefixes, patterns)
+                a["adjusted_content"] = _sanitize_linewise(
+                    a.get("adjusted_content") or "", prefixes, patterns
+                )
+                a["translated_content"] = _sanitize_linewise(
+                    a.get("translated_content") or "", prefixes, patterns
+                )
     # Use sanitized 'data' for export
     data_or_path = data
     export_dir, out_path = compute_export_targets(conf, output, default_filename)
-    split_flag = split if split is not None else bool(conf.get("export_split") if conf.get("export_split") is not None else True)
+    split_flag = (
+        split
+        if split is not None
+        else bool(conf.get("export_split") if conf.get("export_split") is not None else True)
+    )
 
     writer = DocumentWriter(cfg_doc)
     if split_flag:
@@ -115,4 +138,3 @@ def export_processed(data_or_path: Dict[str, Any] | Path, conf: Dict[str, Any], 
     else:
         writer.write_from_processed(data, str(out_path))
         return {"split": False, "path": str(out_path)}
-

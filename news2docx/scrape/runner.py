@@ -1,23 +1,21 @@
 from __future__ import annotations
 
-import os
-import time
 import json
+import os
 import random
-from dataclasses import dataclass, asdict, field
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse, urlencode
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlencode, urlparse
 
 import requests
-import sqlite3
 from bs4 import BeautifulSoup
-from news2docx.scrape.selectors import load_selector_overrides, merge_selectors
 
 from news2docx.core.utils import now_stamp
-from news2docx.infra.logging import unified_print, log_task_start, log_task_end, log_processing_step
-
+from news2docx.infra.logging import log_task_end, log_task_start, unified_print
+from news2docx.scrape.selectors import load_selector_overrides, merge_selectors
 
 DEFAULT_CRAWLER_API_URL = "https://gdelt-xupojkickl.cn-hongkong.fcapp.run"
 GDELT_BASE = "https://api.gdeltproject.org/api/v2/doc/doc"
@@ -28,16 +26,31 @@ class ScrapeConfig:
     api_url: str = os.getenv("CRAWLER_API_URL", DEFAULT_CRAWLER_API_URL)
     api_token: Optional[str] = field(default_factory=lambda: os.getenv("CRAWLER_API_TOKEN"))
     mode: str = field(default_factory=lambda: os.getenv("CRAWLER_MODE", "remote"))  # remote | local
-    sites_file: Optional[str] = field(default_factory=lambda: os.getenv("CRAWLER_SITES_FILE") or os.path.join(os.getcwd(), "server", "news_website.txt"))
+    sites_file: Optional[str] = field(
+        default_factory=lambda: os.getenv("CRAWLER_SITES_FILE")
+        or os.path.join(os.getcwd(), "server", "news_website.txt")
+    )
     gdelt_timespan: str = field(default_factory=lambda: os.getenv("GDELT_TIMESPAN", "7d"))
-    gdelt_max_per_call: int = field(default_factory=lambda: int(os.getenv("GDELT_MAX_PER_CALL")) if os.getenv("GDELT_MAX_PER_CALL") else 50)
+    gdelt_max_per_call: int = field(
+        default_factory=lambda: (
+            int(os.getenv("GDELT_MAX_PER_CALL")) if os.getenv("GDELT_MAX_PER_CALL") else 50
+        )
+    )
     gdelt_sort: str = field(default_factory=lambda: os.getenv("GDELT_SORT", "datedesc"))
     timeout: int = 30
     concurrency: int = 4
     max_urls: int = 1
     pick_mode: str = field(default_factory=lambda: os.getenv("CRAWLER_PICK_MODE", "random"))
-    random_seed: Optional[int] = field(default_factory=lambda: (int(os.getenv("CRAWLER_RANDOM_SEED")) if os.getenv("CRAWLER_RANDOM_SEED") else None))
-    db_path: str = field(default_factory=lambda: os.getenv("N2D_DB_PATH", os.path.join(os.getcwd(), ".n2d_cache", "crawled.sqlite3")))
+    random_seed: Optional[int] = field(
+        default_factory=lambda: (
+            int(os.getenv("CRAWLER_RANDOM_SEED")) if os.getenv("CRAWLER_RANDOM_SEED") else None
+        )
+    )
+    db_path: str = field(
+        default_factory=lambda: os.getenv(
+            "N2D_DB_PATH", os.path.join(os.getcwd(), ".n2d_cache", "crawled.sqlite3")
+        )
+    )
     noise_patterns: Optional[List[str]] = None  # extra noise patterns from config
 
 
@@ -60,7 +73,9 @@ class ScrapeResults:
     articles: List[Article] = field(default_factory=list)
 
 
-def _http_post(url: str, json_body: Dict[str, Any], headers: Dict[str, str], timeout: int) -> Optional[Dict[str, Any]]:
+def _http_post(
+    url: str, json_body: Dict[str, Any], headers: Dict[str, str], timeout: int
+) -> Optional[Dict[str, Any]]:
     try:
         r = requests.post(url, json=json_body, headers=headers, timeout=timeout)
         r.raise_for_status()
@@ -87,22 +102,22 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
     base = {
         "bbc.com": {
             "title": ['h1[data-testid="headline"]', "h1"],
-            "content": ['[data-component="text-block"] p', 'article p', 'p'],
+            "content": ['[data-component="text-block"] p', "article p", "p"],
             "remove": [".ad", "script", "style", "nav", "aside"],
         },
         "cnn.com": {
             "title": ["h1.headline__text", "h1"],
-            "content": ['div[data-module="ArticleBody"] p', '.article__content p', 'p'],
+            "content": ['div[data-module="ArticleBody"] p', ".article__content p", "p"],
             "remove": [".ad", ".byline", "script", "style"],
         },
         "nytimes.com": {
-            "title": ['h1[data-testid="headline"]', 'h1'],
-            "content": ['section[name="articleBody"] p', 'div[data-testid="articleBody"] p', 'p'],
+            "title": ['h1[data-testid="headline"]', "h1"],
+            "content": ['section[name="articleBody"] p', 'div[data-testid="articleBody"] p', "p"],
             "remove": [".css-1cp3ece", ".byline", "script", "style"],
         },
         "time.com": {
             "title": ["h1.headline", "h1"],
-            "content": ['div[data-testid="article-body"] p', 'article p', 'p'],
+            "content": ['div[data-testid="article-body"] p', "article p", "p"],
             "remove": [".ad", ".tags", "script", "style"],
         },
     }
@@ -135,7 +150,7 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
             except Exception:
                 continue
         if not title_text:
-            title_text = (soup.title.get_text(strip=True) if soup.title else "")
+            title_text = soup.title.get_text(strip=True) if soup.title else ""
         # content
         paras: List[str] = []
         for sel in base[key].get("content", []):
@@ -150,9 +165,14 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
             except Exception:
                 continue
         if not paras:
-            paras = [p.get_text(strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) >= 30]
+            paras = [
+                p.get_text(strip=True)
+                for p in soup.find_all("p")
+                if len(p.get_text(strip=True)) >= 30
+            ]
         # Heuristic noise filtering: drop login/cookie/notice banners
-        NOISE_PATTERNS = (noise_patterns or [])
+        NOISE_PATTERNS = noise_patterns or []
+
         def _is_noise(s: str) -> bool:
             t = s.strip().lower()
             if len(t) <= 20:
@@ -161,16 +181,22 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
                 if pat.lower() in t:
                     return True
             return False
+
         filtered = [x for x in paras if not _is_noise(x)]
         content = "\n\n".join(filtered or paras)
         return title_text, content
 
     # fallback generic
     title = soup.find("h1")
-    title_text = title.get_text(strip=True) if title else (soup.title.get_text(strip=True) if soup.title else "")
+    title_text = (
+        title.get_text(strip=True)
+        if title
+        else (soup.title.get_text(strip=True) if soup.title else "")
+    )
     paras = [p.get_text(strip=True) for p in soup.find_all("p")]
     # Apply same noise filtering for generic fallback
-    NOISE_PATTERNS = (noise_patterns or [])
+    NOISE_PATTERNS = noise_patterns or []
+
     def _is_noise(s: str) -> bool:
         t = s.strip().lower()
         if len(t) <= 20:
@@ -179,6 +205,7 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
             if pat.lower() in t:
                 return True
         return False
+
     content = "\n\n".join([p for p in paras if len(p) > 20 and not _is_noise(p)])
     return title_text, content
 
@@ -198,7 +225,9 @@ class NewsScraper:
     # ---------------- DB helpers ----------------
     def _db_connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.cfg.db_path)
-        conn.execute("CREATE TABLE IF NOT EXISTS crawled_urls (url TEXT PRIMARY KEY, scraped_at TEXT)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS crawled_urls (url TEXT PRIMARY KEY, scraped_at TEXT)"
+        )
         return conn
 
     def _filter_new_urls(self, urls: List[str]) -> List[str]:
@@ -224,7 +253,10 @@ class NewsScraper:
             conn = self._db_connect()
             cur = conn.cursor()
             now = now_stamp()
-            cur.executemany("INSERT OR IGNORE INTO crawled_urls(url, scraped_at) VALUES(?, ?)", [(u, now) for u in urls])
+            cur.executemany(
+                "INSERT OR IGNORE INTO crawled_urls(url, scraped_at) VALUES(?, ?)",
+                [(u, now) for u in urls],
+            )
             conn.commit()
             conn.close()
         except Exception:
@@ -254,10 +286,12 @@ class NewsScraper:
         headers = {
             "Authorization": f"Bearer {self.cfg.api_token}",
             "Content-Type": "application/json",
-            "User-Agent": random.choice([
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-            ]),
+            "User-Agent": random.choice(
+                [
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+                ]
+            ),
         }
         data = _http_post(self.cfg.api_url, {}, headers, self.cfg.timeout) or {}
         urls = data.get("urls") if isinstance(data, dict) else data
@@ -326,7 +360,7 @@ class NewsScraper:
         all_urls: List[str] = []
         seen = set()
         for i in range(0, len(sites), batch_size):
-            batch = sites[i:i+batch_size]
+            batch = sites[i : i + batch_size]
             q = self._gdelt_build_query(batch)
             data = self._gdelt_request(q)
             urls = self._gdelt_extract_urls(data, lang="eng")
@@ -338,11 +372,26 @@ class NewsScraper:
 
     def _noise_patterns(self) -> List[str]:
         base = [
-            "please refresh", "refresh your browser", "auto login", "automatic login", "sign in", "sign up",
-            "subscribe", "newsletter", "cookie", "cookies", "privacy", "terms", "ad choices", "manage settings",
-            "enable cookies", "your browser settings", "consent",
+            "please refresh",
+            "refresh your browser",
+            "auto login",
+            "automatic login",
+            "sign in",
+            "sign up",
+            "subscribe",
+            "newsletter",
+            "cookie",
+            "cookies",
+            "privacy",
+            "terms",
+            "ad choices",
+            "manage settings",
+            "enable cookies",
+            "your browser settings",
+            "consent",
             # Common site boilerplate
-            "Posts from this author will be added", "Posts from this topic will be added",
+            "Posts from this author will be added",
+            "Posts from this topic will be added",
             "A free daily digest of the news that matters most",
             "This is the title for the native ad",
         ]
@@ -360,10 +409,20 @@ class NewsScraper:
         if not title or not content:
             return None
         wc = len(content.split())
-        return Article(index=idx, url=url, title=title, content=content, content_length=len(content), word_count=wc, scraped_at=now_stamp())
+        return Article(
+            index=idx,
+            url=url,
+            title=title,
+            content=content,
+            content_length=len(content),
+            word_count=wc,
+            scraped_at=now_stamp(),
+        )
 
     def run(self) -> ScrapeResults:
-        log_task_start("scrape", "run", {"max_urls": self.cfg.max_urls, "concurrency": self.cfg.concurrency})
+        log_task_start(
+            "scrape", "run", {"max_urls": self.cfg.max_urls, "concurrency": self.cfg.concurrency}
+        )
         urls_all = self._fetch_urls()
         # filter previously crawled
         urls_new = self._filter_new_urls(urls_all)
@@ -378,7 +437,9 @@ class NewsScraper:
                 a = fut.result()
                 if a:
                     arts.append(a)
-        res = ScrapeResults(total=len(urls), success=len(arts), failed=len(urls) - len(arts), articles=arts)
+        res = ScrapeResults(
+            total=len(urls), success=len(arts), failed=len(urls) - len(arts), articles=arts
+        )
         # mark successfully scraped URLs into DB to avoid re-crawling
         try:
             self._mark_crawled_bulk([a.url for a in arts])
@@ -405,8 +466,9 @@ def save_scraped_data_to_json(results: ScrapeResults, timestamp: str) -> str:
     }
     try:
         from news2docx.services.runs import runs_base_dir
+
         base = runs_base_dir()
-        run_dir = (Path(base) / timestamp)
+        run_dir = Path(base) / timestamp
         run_dir.mkdir(parents=True, exist_ok=True)
         out_path = run_dir / "scraped.json"
     except Exception:

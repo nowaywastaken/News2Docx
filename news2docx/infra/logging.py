@@ -25,15 +25,13 @@ like ``unified_print`` and ``log_task_*``.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import logging.config
 import os
 import sys
-from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from typing import Any, Dict, Optional
-
-import contextvars
 
 # ---------------- Levels: add TRACE, FATAL alias ----------------
 
@@ -41,9 +39,11 @@ TRACE_LEVEL = 5
 if not hasattr(logging, "TRACE"):
     logging.addLevelName(TRACE_LEVEL, "TRACE")
 
+
 def _trace(self: logging.Logger, msg: str, *args: Any, **kwargs: Any) -> None:
     if self.isEnabledFor(TRACE_LEVEL):
         self._log(TRACE_LEVEL, msg, args, **kwargs)
+
 
 if not hasattr(logging.Logger, "trace"):
     logging.Logger.trace = _trace  # type: ignore[attr-defined]
@@ -57,21 +57,26 @@ if not hasattr(logging, "FATAL"):
 
 _MDC: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("MDC", default={})
 
+
 def mdc_put(key: str, value: Any) -> None:
     d = dict(_MDC.get())
     d[key] = value
     _MDC.set(d)
 
+
 def mdc_get(key: str, default: Any = None) -> Any:
     return _MDC.get().get(key, default)
+
 
 def mdc_remove(key: str) -> None:
     d = dict(_MDC.get())
     d.pop(key, None)
     _MDC.set(d)
 
+
 def mdc_clear() -> None:
     _MDC.set({})
+
 
 def mdc_copy() -> Dict[str, Any]:
     return dict(_MDC.get())
@@ -103,6 +108,7 @@ class MDCFilter(logging.Filter):
 
 # ---------------- Formatters ----------------
 
+
 class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: Dict[str, Any] = {
@@ -126,11 +132,13 @@ class JSONFormatter(logging.Formatter):
 _CONFIGURED = False
 _CACHE: Dict[str, logging.Logger] = {}
 
+
 def _env_bool(name: str, default: bool = False) -> bool:
     v = os.getenv(name)
     if v is None:
         return default
     return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
 
 def _level_from_env(name: str, default: str = "INFO") -> int:
     s = str(os.getenv(name, default)).strip().upper()
@@ -139,6 +147,7 @@ def _level_from_env(name: str, default: str = "INFO") -> int:
     if s == "TRACE":
         return TRACE_LEVEL
     return getattr(logging, s, logging.INFO)
+
 
 def _default_log_file() -> str:
     directory = os.getenv("N2D_LOG_DIR") or os.path.join(os.getcwd(), "logs")
@@ -253,7 +262,9 @@ def _ensure_logging():
             init_logging()
         except Exception:
             # Fallback: very basic setup to avoid silent logs
-            logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+            logging.basicConfig(
+                level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s"
+            )
             _CONFIGURED = True
 
 
@@ -298,7 +309,9 @@ def log_task_start(program: str, task_type: str, details: Optional[Dict[str, Any
     logger.info("[TASK START] %s", json.dumps(details or {}, ensure_ascii=False))
 
 
-def log_task_end(program: str, task_type: str, success: bool, details: Optional[Dict[str, Any]] = None) -> None:
+def log_task_end(
+    program: str, task_type: str, success: bool, details: Optional[Dict[str, Any]] = None
+) -> None:
     logger = get_unified_logger(program, task_type)
     payload = {"success": success}
     if details:
@@ -306,7 +319,9 @@ def log_task_end(program: str, task_type: str, success: bool, details: Optional[
     logger.info("[TASK END] %s", json.dumps(payload, ensure_ascii=False))
 
 
-def log_processing_step(program: str, task_type: str, message: str, details: Optional[Dict[str, Any]] = None) -> None:
+def log_processing_step(
+    program: str, task_type: str, message: str, details: Optional[Dict[str, Any]] = None
+) -> None:
     logger = get_unified_logger(program, task_type)
     if details:
         logger.info("%s | %s", message, json.dumps(details, ensure_ascii=False))
@@ -322,7 +337,9 @@ def log_error(program: str, task_type: str, error: Exception, context: str = "")
         logger.error("%s", error, exc_info=isinstance(error, Exception))
 
 
-def log_performance(program: str, task_type: str, metric: str, value: Any, details: Optional[Dict[str, Any]] = None) -> None:
+def log_performance(
+    program: str, task_type: str, metric: str, value: Any, details: Optional[Dict[str, Any]] = None
+) -> None:
     logger = get_unified_logger(program, task_type)
     payload = {"metric": metric, "value": value}
     if details:
@@ -448,6 +465,7 @@ def log_batch_processing(
     if extra:
         payload.update(extra)
     logger.info("[BATCH] %s", json.dumps(payload, ensure_ascii=False))
+
 
 __all__ = [
     "init_logging",

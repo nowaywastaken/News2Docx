@@ -1,4 +1,4 @@
-from news2docx.core.utils import safe_filename, now_stamp
+from news2docx.core.utils import now_stamp, safe_filename
 
 
 def test_safe_filename_basic():
@@ -9,4 +9,3 @@ def test_safe_filename_basic():
 def test_now_stamp_format():
     ts = now_stamp()
     assert len(ts) == 15 and ts[8] == "_"
-

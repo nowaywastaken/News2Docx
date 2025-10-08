@@ -1,17 +1,19 @@
 # index.py —— 阿里云函数计算(FC) 事件函数 · GDELT Doc 2.0 抓取过去7天新闻URL
 # -*- coding: utf-8 -*-
-import os
 import json
+import os
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
-from urllib.parse import urlencode
 from itertools import islice
 from pathlib import Path
+from typing import Callable, Dict, List, Optional
+from urllib.parse import urlencode
+
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 # ========== 默认配置（可用环境变量覆盖）==========
 DEFAULT_SITES: List[str] = []
+
 
 def _read_sites_from_file(path: Path):
     try:
@@ -26,11 +28,13 @@ def _read_sites_from_file(path: Path):
         out.append(s)
     return out
 
+
 def default_sites() -> List[str]:
     p = os.getenv("SITES_FILE")
     if not p:
         return []
     return _read_sites_from_file(Path(p))
+
 
 def _env_sites_or(default_list: List[str]) -> List[str]:
     """读取站点清单，优先 `Websites` (JSON 数组字符串)，其次 `SITES` (CSV)。"""
@@ -48,10 +52,11 @@ def _env_sites_or(default_list: List[str]) -> List[str]:
         return [x.strip() for x in v2.split(",") if x.strip()]
     return list(default_list or [])
 
-DEFAULT_TIMESPAN = "7d"        # 过去7天；也可用 24h/30d 或改为绝对时间（另写startdatetime/enddatetime）
-DEFAULT_MAX = 50               # 最多返回50条
-DEFAULT_SORT = "datedesc"      # 最新在前
-BATCH_SIZE = 5                 # 每批最多几个域名，避免关键词过于“常见”导致报错
+
+DEFAULT_TIMESPAN = "7d"  # 过去7天；也可用 24h/30d 或改为绝对时间（另写startdatetime/enddatetime）
+DEFAULT_MAX = 50  # 最多返回50条
+DEFAULT_SORT = "datedesc"  # 最新在前
+BATCH_SIZE = 5  # 每批最多几个域名，避免关键词过于“常见”导致报错
 BASE = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 REQUEST_HEADERS = {
@@ -59,10 +64,12 @@ REQUEST_HEADERS = {
     "Accept": "application/json,text/plain,*/*",
 }
 
+
 # ========== 运行期配置（便于测试与解耦） ==========
 @dataclass
 class Config:
     """运行参数配置。尽量避免在导入阶段做I/O。"""
+
     sites: List[str]
     timespan: str = DEFAULT_TIMESPAN
     max_per_call: int = DEFAULT_MAX
@@ -94,12 +101,14 @@ class Config:
             timeout=timeout,
         )
 
+
 # ========== 工具函数 ==========
 def env_list(name, default_list):
     v = os.getenv(name)
     if not v:
         return default_list
     return [x.strip() for x in v.split(",") if x.strip()]
+
 
 def env_int(name, default_int):
     v = os.getenv(name)
@@ -108,6 +117,7 @@ def env_int(name, default_int):
     except Exception:
         return default_int
 
+
 def chunk(lst, n):
     it = iter(lst)
     while True:
@@ -115,6 +125,7 @@ def chunk(lst, n):
         if not block:
             return
         yield block
+
 
 def build_query_from_sites(sites):
     """
@@ -127,13 +138,17 @@ def build_query_from_sites(sites):
     parts = [f"domainis:{d}" for d in sites if d]
     return parts[0] if len(parts) == 1 else "(" + " OR ".join(parts) + ")"
 
+
 class NonJSONResponseError(RuntimeError):
     pass
+
 
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=1, max=16),
-    retry=retry_if_exception_type((requests.RequestException, NonJSONResponseError, json.JSONDecodeError)),
+    retry=retry_if_exception_type(
+        (requests.RequestException, NonJSONResponseError, json.JSONDecodeError)
+    ),
     reraise=True,
 )
 def gdelt_fetch(query, *, timespan, maxrecords, sort):
@@ -160,6 +175,7 @@ def gdelt_fetch(query, *, timespan, maxrecords, sort):
     except Exception:
         snippet = resp.text[:500].replace("\n", " ")
         raise NonJSONResponseError(f"JSON parse failed; snippet: {snippet}")
+
 
 def extract_urls(raw_json, lang="eng"):
     """
@@ -217,8 +233,11 @@ def do_job(
                 all_urls.append(u)
     return {"count": len(all_urls), "urls": all_urls}
 
+
 # ========== 事件函数入口 ==========
-def handler(event, context, *, cfg: Optional[Config] = None, session: Optional[requests.Session] = None):
+def handler(
+    event, context, *, cfg: Optional[Config] = None, session: Optional[requests.Session] = None
+):
     """
     事件函数签名：handler(event, context)
     在控制台“测试函数”里传 {} 即可。
@@ -249,6 +268,6 @@ def handler(event, context, *, cfg: Optional[Config] = None, session: Optional[r
                 "max_per_call": cfg.max_per_call,
                 "sort": cfg.sort,
             },
-            "hint": "若仍失败：先把 TIMESPAN 改为 24h；或调小域名数量；或检查函数是否能出公网（VPC需NAT）。"
+            "hint": "若仍失败：先把 TIMESPAN 改为 24h；或调小域名数量；或检查函数是否能出公网（VPC需NAT）。",
         }
         return json.dumps(err, ensure_ascii=False).encode("utf-8")

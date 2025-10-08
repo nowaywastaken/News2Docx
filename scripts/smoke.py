@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def check_docx_writer() -> None:
-    from news2docx.export.docx import DocumentWriter, DocumentConfig
+    from news2docx.export.docx import DocumentConfig, DocumentWriter
 
     processed = {
         "articles": [

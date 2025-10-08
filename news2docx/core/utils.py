@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import re
 import time
 from typing import Union
@@ -35,9 +36,8 @@ def safe_filename(filename: str, max_length: int = 255) -> str:
     return f"{name}{ext}"
 
 
-def ensure_directory(path: Union[str, Path]) -> Path:
-    """确保目录存在并返回 Path 对象。"""
-    from pathlib import Path as _P
-    p = _P(path)
+def ensure_directory(path: Union[str, pathlib.Path]) -> pathlib.Path:
+    """Ensure directory exists and return Path object."""
+    p = pathlib.Path(path)
     p.mkdir(parents=True, exist_ok=True)
     return p

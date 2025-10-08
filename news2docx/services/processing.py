@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from news2docx.process.engine import (
     Article as ProcArticle,
+)
+from news2docx.process.engine import (
     process_articles_two_steps_concurrent,
 )
 
@@ -54,11 +55,14 @@ def articles_from_scraped(objs: List[object]) -> List[ProcArticle]:
 
 def process_articles(articles: List[ProcArticle], conf: Dict[str, Any]) -> Dict[str, Any]:
     """Run the two-step processing with config-derived options."""
-    target_lang = (conf.get("target_language") or "Chinese") if isinstance(conf, dict) else "Chinese"
+    target_lang = (
+        (conf.get("target_language") or "Chinese") if isinstance(conf, dict) else "Chinese"
+    )
     merge_short = conf.get("merge_short_paragraph_chars") if isinstance(conf, dict) else None
     try:
         merge_short_i: Optional[int] = int(merge_short) if merge_short is not None else None
     except Exception:
         merge_short_i = None
-    return process_articles_two_steps_concurrent(articles, target_lang=target_lang, merge_short_chars=merge_short_i)
-
+    return process_articles_two_steps_concurrent(
+        articles, target_lang=target_lang, merge_short_chars=merge_short_i
+    )

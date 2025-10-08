@@ -1,19 +1,23 @@
 ﻿from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import time
-import hashlib
-from dataclasses import dataclass, asdict, field
-from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 from news2docx.core.utils import now_stamp
 from news2docx.infra.logging import (
-    log_task_start, log_task_end, log_processing_step, log_processing_result, log_api_call, log_error
+    log_error,
+    log_processing_result,
+    log_processing_step,
+    log_task_end,
+    log_task_start,
 )
 
 
@@ -25,7 +29,9 @@ def _load_model_and_base_from_config() -> Tuple[Optional[str], Optional[str]]:
     """
     try:
         from pathlib import Path
+
         import yaml  # type: ignore
+
         p = Path.cwd() / "config.yml"
         if not p.exists():
             return None, None
@@ -35,6 +41,7 @@ def _load_model_and_base_from_config() -> Tuple[Optional[str], Optional[str]]:
         return data.get("openai_model"), data.get("openai_api_base")
     except Exception:
         return None, None
+
 
 TARGET_WORD_MIN = 400
 TARGET_WORD_MAX = 450
@@ -80,7 +87,9 @@ STRICT RULES:
 - DO NOT output notes, remarks, timestamps, media names, sources, authors, copyright, image captions, ads, disclaimers, or titles.
 - Keep EXACT paragraph count as input; use %% as separator for multi-paragraph input.
 """
-TRANSLATION_USER_PROMPT = "Translate to {{to}}. Output clean body only. Do not add any notes or metadata.\n\n{{text}}"
+TRANSLATION_USER_PROMPT = (
+    "Translate to {{to}}. Output clean body only. Do not add any notes or metadata.\n\n{{text}}"
+)
 
 
 def build_translation_prompts(text: str, target_lang: str = "Chinese") -> Tuple[str, str]:
@@ -93,8 +102,10 @@ def build_translation_prompts(text: str, target_lang: str = "Chinese") -> Tuple[
 
 def _load_cleaning_config() -> Dict[str, Any]:
     from pathlib import Path
+
     try:
         import yaml  # type: ignore
+
         p = Path.cwd() / "config.yml"
         data = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {}
         if not isinstance(data, dict):
@@ -108,7 +119,9 @@ def _load_cleaning_config() -> Dict[str, Any]:
         return {"prefixes": [], "patterns": [], "min_words": 200}
 
 
-def _sanitize_meta(text: str, prefixes: List[str], patterns: List[str]) -> Tuple[str, int, List[str]]:
+def _sanitize_meta(
+    text: str, prefixes: List[str], patterns: List[str]
+) -> Tuple[str, int, List[str]]:
     """Remove metadata lines and patterns from text; returns (clean_text, removed_count, removed_kinds)."""
     removed = 0
     kinds: List[str] = []
@@ -135,6 +148,7 @@ def _sanitize_meta(text: str, prefixes: List[str], patterns: List[str]) -> Tuple
     # Pattern-based removal
     if patterns:
         import re
+
         tmp_lines: List[str] = []
         for ln in out_lines:
             s = ln.strip()
@@ -151,7 +165,7 @@ def _sanitize_meta(text: str, prefixes: List[str], patterns: List[str]) -> Tuple
             if not matched:
                 tmp_lines.append(ln)
         out_lines = tmp_lines
-    cleaned = "\n".join([l for l in out_lines]).strip()
+    cleaned = "\n".join([line for line in out_lines]).strip()
     return cleaned, removed, kinds
 
 
@@ -168,14 +182,23 @@ def _cache_get(key: str) -> Optional[str]:
 
 def _cache_set(key: str, content: str) -> None:
     try:
-        json.dump({"content": content}, open(os.path.join(_CACHE_DIR, f"{key}.json"), "w", encoding="utf-8"), ensure_ascii=False)
+        json.dump(
+            {"content": content},
+            open(os.path.join(_CACHE_DIR, f"{key}.json"), "w", encoding="utf-8"),
+            ensure_ascii=False,
+        )
     except Exception:
         pass
 
 
-def call_ai_api(system_prompt: str, user_prompt: str, model: Optional[str] = None,
-                api_key: Optional[str] = None, url: Optional[str] = None,
-                max_tokens: Optional[int] = None) -> str:
+def call_ai_api(
+    system_prompt: str,
+    user_prompt: str,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    url: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+) -> str:
     # OpenAI-Compatible envs only
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -200,7 +223,9 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: Optional[str] = Non
         "max_tokens": max_tokens,
     }
 
-    key_src = json.dumps({"m": model, "u": user_prompt, "s": system_prompt, "t": max_tokens}, ensure_ascii=False).encode("utf-8")
+    key_src = json.dumps(
+        {"m": model, "u": user_prompt, "s": system_prompt, "t": max_tokens}, ensure_ascii=False
+    ).encode("utf-8")
     cache_key = hashlib.sha256(key_src).hexdigest()
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -208,7 +233,6 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: Optional[str] = Non
 
     global _LAST_CALL_MS
     for attempt in range(3):
-        t0 = time.time()
         try:
             if _AI_MIN_INTERVAL_MS > 0:
                 now_ms = int(time.time() * 1000)
@@ -235,7 +259,6 @@ def call_ai_api(system_prompt: str, user_prompt: str, model: Optional[str] = Non
                     final_url = b + "/chat/completions"
             resp = requests.post(final_url, headers=headers, json=body, timeout=120)
             _LAST_CALL_MS = int(time.time() * 1000)
-            total_ms = int((time.time() - t0) * 1000)
             if resp.status_code == 200:
                 data = resp.json()
                 content = data["choices"][0]["message"]["content"]
@@ -307,7 +330,9 @@ def _count_words(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text or ""))
 
 
-def _adjust_word_count(text: str, min_w: int = TARGET_WORD_MIN, max_w: int = TARGET_WORD_MAX, max_attempts: int = 3) -> Tuple[str, int]:
+def _adjust_word_count(
+    text: str, min_w: int = TARGET_WORD_MIN, max_w: int = TARGET_WORD_MAX, max_attempts: int = 3
+) -> Tuple[str, int]:
     wc = _count_words(text)
     if min_w <= wc <= max_w:
         cfg = _load_cleaning_config()
@@ -324,7 +349,9 @@ def _adjust_word_count(text: str, min_w: int = TARGET_WORD_MIN, max_w: int = TAR
         usr_p = instruction + "\n\n" + text
         adjusted = call_ai_api(sys_p, usr_p, max_tokens=estimate_max_tokens(1))
         cfg = _load_cleaning_config()
-        adjusted_clean, _rm, _k = _sanitize_meta(adjusted, cfg.get("prefixes", []), cfg.get("patterns", []))
+        adjusted_clean, _rm, _k = _sanitize_meta(
+            adjusted, cfg.get("prefixes", []), cfg.get("patterns", [])
+        )
         adjusted = adjusted_clean or adjusted
         wc = _count_words(adjusted)
         if min_w <= wc <= max_w:
@@ -362,7 +389,9 @@ def _merge_short_paragraphs_text(text: str, max_chars: int = 80) -> str:
 def _translate_title(title: str, target_lang: str) -> str:
     if not title:
         return ""
-    system_prompt = f"You are a professional {target_lang} title translator. Output only the translation."
+    system_prompt = (
+        f"You are a professional {target_lang} title translator. Output only the translation."
+    )
     user_prompt = f"Translate to {target_lang}:\n\n{title}"
     try:
         return call_ai_api(system_prompt, user_prompt, max_tokens=estimate_max_tokens(1))
@@ -370,14 +399,18 @@ def _translate_title(title: str, target_lang: str) -> str:
         return title
 
 
-def process_article(article: Article, target_lang: str = "Chinese", merge_short_chars: Optional[int] = None) -> Dict[str, Any]:
+def process_article(
+    article: Article, target_lang: str = "Chinese", merge_short_chars: Optional[int] = None
+) -> Dict[str, Any]:
     start = time.time()
     log_processing_step("engine", "article", f"processing article {article.index}")
 
     # Step 1: word adjust
     adjusted_raw, final_wc = _adjust_word_count(article.content)
     cfg_clean = _load_cleaning_config()
-    adjusted, rm1, kinds1 = _sanitize_meta(adjusted_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", []))
+    adjusted, rm1, kinds1 = _sanitize_meta(
+        adjusted_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
+    )
     if not adjusted:
         adjusted = adjusted_raw
     # Merge short English paragraphs to reduce excessive breaks
@@ -386,7 +419,9 @@ def process_article(article: Article, target_lang: str = "Chinese", merge_short_
     sys_p, usr_p = build_translation_prompts(adjusted, target_lang)
     translated_raw = call_ai_api(sys_p, usr_p)
     translated_raw = ensure_paragraph_parity(translated_raw, adjusted)
-    translated, rm2, kinds2 = _sanitize_meta(translated_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", []))
+    translated, rm2, kinds2 = _sanitize_meta(
+        translated_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
+    )
     if not translated:
         translated = translated_raw
     # Title translation
@@ -411,17 +446,29 @@ def process_article(article: Article, target_lang: str = "Chinese", merge_short_
         "clean_removed_zh": int(rm2),
         "clean_removed_kinds": list(set(kinds1 + kinds2)),
     }
-    log_processing_result("engine", "article", "ok", article.to_dict(), res, "success", {"elapsed": time.time() - start})
+    log_processing_result(
+        "engine",
+        "article",
+        "ok",
+        article.to_dict(),
+        res,
+        "success",
+        {"elapsed": time.time() - start},
+    )
     return res
 
 
-def process_articles_two_steps_concurrent(articles: List[Article], target_lang: str = "Chinese", merge_short_chars: Optional[int] = None) -> Dict[str, Any]:
+def process_articles_two_steps_concurrent(
+    articles: List[Article], target_lang: str = "Chinese", merge_short_chars: Optional[int] = None
+) -> Dict[str, Any]:
     t0 = time.time()
     log_task_start("engine", "batch", {"count": len(articles), "target_lang": target_lang})
     out: List[Dict[str, Any]] = []
     errors = 0
     with ThreadPoolExecutor(max_workers=max(1, DEFAULT_CONCURRENCY)) as ex:
-        fut_to_article = {ex.submit(process_article, a, target_lang, merge_short_chars): a for a in articles}
+        fut_to_article = {
+            ex.submit(process_article, a, target_lang, merge_short_chars): a for a in articles
+        }
         for fut in as_completed(fut_to_article):
             a = fut_to_article[fut]
             try:
@@ -429,25 +476,28 @@ def process_articles_two_steps_concurrent(articles: List[Article], target_lang: 
             except Exception as e:
                 # Log a clear error for visibility in UI/terminal
                 try:
-                    log_error("engine", "article", e, context=f"article {a.index} AI processing failed")
+                    log_error(
+                        "engine", "article", e, context=f"article {a.index} AI processing failed"
+                    )
                 except Exception:
                     pass
                 errors += 1
                 # Fallback: keep original article content so export is not empty
-                out.append({
-                    "id": str(a.index),
-                    "original_title": a.title,
-                    "translated_title": a.title,
-                    "original_content": a.content,
-                    "adjusted_content": a.content,
-                    "translated_content": "",
-                    "target_language": target_lang,
-                    "processing_timestamp": now_stamp(),
-                    "url": a.url,
-                    "success": False,
-                    "error": str(e),
-                })
+                out.append(
+                    {
+                        "id": str(a.index),
+                        "original_title": a.title,
+                        "translated_title": a.title,
+                        "original_content": a.content,
+                        "adjusted_content": a.content,
+                        "translated_content": "",
+                        "target_language": target_lang,
+                        "processing_timestamp": now_stamp(),
+                        "url": a.url,
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
     payload = {"articles": out, "metadata": {"processed": len(out), "failed": errors}}
     log_task_end("engine", "batch", errors == 0, {"elapsed": time.time() - t0})
     return payload
-

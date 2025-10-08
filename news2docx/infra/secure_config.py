@@ -48,7 +48,9 @@ def _load_or_create_master_key(service: str) -> bytes:
         try:
             return _require_bytes(existing)
         except Exception:
-            unified_print("invalid master key encoding; regenerating", "secure", "key", level="warn")
+            unified_print(
+                "invalid master key encoding; regenerating", "secure", "key", level="warn"
+            )
     key = secrets.token_bytes(32)
     keyring.set_password(service, user, _b64(key))
     unified_print("master key created in keyring", "secure", "key", level="info")
@@ -76,11 +78,12 @@ def _aesgcm_decrypt(key: bytes, token: str, aad: bytes) -> str:
 def _collect_sensitive_keys(cfg: Dict[str, Any]) -> List[str]:
     sec = cfg.get("security") if isinstance(cfg, dict) else None
     if not isinstance(sec, dict):
-        return ["openai_api_key", "crawler_api_token"]
+        # Default sensitive fields include API keys and endpoints
+        return ["openai_api_key", "crawler_api_token", "crawler_api_url"]
     keys = sec.get("sensitive_keys")
     if isinstance(keys, list) and keys:
         return [str(k) for k in keys]
-    return ["openai_api_key", "crawler_api_token"]
+    return ["openai_api_key", "crawler_api_token", "crawler_api_url"]
 
 
 def _service_name(cfg: Dict[str, Any]) -> str:
@@ -149,7 +152,9 @@ def secure_load_config(config_path: str) -> Dict[str, Any]:
                 dec = _aesgcm_decrypt(master, val, aad)
                 cfg[key] = dec
             except Exception:
-                unified_print(f"failed to decrypt field '{key}'", "secure", "decrypt", level="error")
+                unified_print(
+                    f"failed to decrypt field '{key}'", "secure", "decrypt", level="error"
+                )
                 raise
         else:
             if should_persist:
@@ -157,14 +162,28 @@ def secure_load_config(config_path: str) -> Dict[str, Any]:
                 cfg[key] = val  # keep runtime plaintext
                 try:
                     import yaml  # type: ignore
+
                     data = load_config_file(p)
                     if isinstance(data, dict):
                         data[key] = enc
-                        p.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+                        p.write_text(
+                            yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                            encoding="utf-8",
+                        )
                         modified = True
-                        unified_print(f"encrypted field '{key}' and updated config.yml", "secure", "encrypt", level="info")
+                        unified_print(
+                            f"encrypted field '{key}' and updated config.yml",
+                            "secure",
+                            "encrypt",
+                            level="info",
+                        )
                 except Exception as e:
-                    unified_print(f"failed to persist encryption for '{key}': {e}", "secure", "encrypt", level="warn")
+                    unified_print(
+                        f"failed to persist encryption for '{key}': {e}",
+                        "secure",
+                        "encrypt",
+                        level="warn",
+                    )
 
     if modified and os.getenv("N2D_LOG_LEVEL"):
         # no-op; placeholder to hint that config changed, logs already emitted

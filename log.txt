@@ -1,5 +1,6 @@
-[2025-10-07 18:12:13][INFO][news2docx.ui.startup] logging initialized -> log.txt
-[2025-10-07 18:12:13][INFO][news2docx.secure.encrypt] encrypted field 'openai_api_key' and updated config.yml
-[2025-10-07 18:12:13][INFO][news2docx.secure.encrypt] encrypted field 'crawler_api_token' and updated config.yml
-[2025-10-07 18:12:13][INFO][news2docx.ui.startup] ui ready
-[2025-10-07 18:12:13][INFO][news2docx.ui.startup] ui shown
+[2025-10-08 13:18:53][INFO][news2docx.ui.startup] logging initialized -> log.txt
+[2025-10-08 13:18:58][INFO][news2docx.ui.startup] ui ready
+[2025-10-08 13:18:58][INFO][news2docx.ui.startup] ui shown
+[2025-10-08 13:19:20][INFO][news2docx.ui.config] config saved: export_font_zh_name -> 宋体
+[2025-10-08 13:19:22][INFO][news2docx.ui.config] config saved: openai_api_base -> https://api.siliconflow.cn/v1
+[2025-10-08 13:19:23][INFO][news2docx.ui.config] config saved: crawler_mode -> remote
