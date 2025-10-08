@@ -917,7 +917,8 @@ def run_app() -> None:
         # --- Progress & log bridge ---
         def _install_log_bridge(self) -> None:
             import logging
-            from PyQt6.QtCore import QTimer, pyqtSignal
+
+            from PyQt6.QtCore import QTimer
 
             # Signals created dynamically on instance to keep minimal churn
             # Using simple callables instead of defining pyqtSignal at class level

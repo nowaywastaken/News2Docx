@@ -6,9 +6,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-
-# ---- tests from test_config_autogen.py ----
+# Consolidated imports for tests (ruff E402 compliance)
 from index import load_app_config, prepare_logging
+from news2docx.core.utils import now_stamp, safe_filename
+from news2docx.infra.logging import unified_print
+from news2docx.infra.secure_config import secure_load_config
+from news2docx.process import engine as eng
+from news2docx.process.engine import _sanitize_meta
+from news2docx.services.processing import articles_from_json
+from news2docx.services.runs import clean_runs, runs_base_dir
 
 
 def test_autogen_config_from_example(tmp_path: Path, monkeypatch) -> None:
@@ -34,7 +40,6 @@ def test_autogen_config_from_example(tmp_path: Path, monkeypatch) -> None:
 
 
 # ---- tests from test_machine_encryption.py ----
-from news2docx.infra.secure_config import secure_load_config
 
 
 def _write_yaml(p: Path, content: str) -> None:
@@ -76,7 +81,6 @@ def test_secure_load_does_not_modify_example(tmp_path):
 
 
 # ---- tests from test_sanitize_meta.py ----
-from news2docx.process.engine import _sanitize_meta
 
 
 def test_sanitize_meta_basic_prefix():
@@ -99,7 +103,6 @@ def test_sanitize_meta_datetime_pattern():
 
 
 # ---- tests from test_services_processing.py ----
-from news2docx.services.processing import articles_from_json
 
 
 def test_articles_from_json_basic():
@@ -125,7 +128,6 @@ def test_articles_from_json_basic():
 
 
 # ---- tests from test_services_runs.py ----
-from news2docx.services.runs import clean_runs, runs_base_dir
 
 
 def test_runs_base_dir_env(tmp_path, monkeypatch):
@@ -146,7 +148,6 @@ def test_clean_runs(tmp_path):
 
 
 # ---- tests from test_ui_basic.py ----
-from news2docx.infra.logging import unified_print
 
 
 def test_config_example_ui_structure():
@@ -168,7 +169,6 @@ def test_prepare_logging_console_only(tmp_path):
 
 
 # ---- tests from test_utils.py ----
-from news2docx.core.utils import now_stamp, safe_filename
 
 
 def test_safe_filename_basic():
@@ -182,7 +182,6 @@ def test_now_stamp_format():
 
 
 # ---- tests from test_engine_fallback_translation.py ----
-from news2docx.process import engine as eng
 
 
 def test_process_article_fallback_regenerates_translation(monkeypatch):
@@ -211,4 +210,3 @@ def test_process_article_fallback_regenerates_translation(monkeypatch):
     from news2docx.process.engine import _count_words
 
     assert res["adjusted_word_count"] == _count_words(res["adjusted_content"])  # type: ignore[name-defined]
-
