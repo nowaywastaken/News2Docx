@@ -1,5 +1,7 @@
 __pycache__
 config.yml
+.config.yml.key
+config.yml.key
 .config.toml
 config.toml
 .n2d_cache

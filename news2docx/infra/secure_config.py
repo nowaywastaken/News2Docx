@@ -4,12 +4,11 @@
 
 Responsibilities:
 - Load YAML/JSON config from path.
-- Decrypt sensitive fields transparently using Windows DPAPI (user scope) by default.
+- Decrypt sensitive fields transparently at runtime.
 - Auto-encrypt plaintext sensitive fields in config.yml (only), then persist.
 
 Design notes:
-- On Windows: use DPAPI (CryptProtectData/CryptUnprotectData), no master key persisted.
-- On non-Windows: fallback to AES-GCM with a local master key file alongside config.
+- Single scheme: AES-GCM with a machine-bound derived key (no key file).
 - Never logs plaintext; only logs metadata.
 """
 
@@ -21,7 +20,9 @@ import secrets
 from pathlib import Path
 from typing import Any, Dict, List
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from news2docx.core.config import load_config_file
 from news2docx.infra.logging import unified_print
@@ -35,61 +36,87 @@ def _b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("utf-8")
 
 
-def _dpapi_available() -> bool:
-    return os.name == "nt"
+# Legacy DPAPI/encgcm support removed.
 
 
-def _dpapi_encrypt(plaintext: str, aad: bytes) -> str:
-    # Windows user-scoped encryption; aad is used as optional entropy
-    import win32crypt  # type: ignore
+def _machine_identifier() -> bytes:
+    """Return a machine-stable identifier as bytes.
 
-    data = plaintext.encode("utf-8")
-    entropy = aad if aad else None
-    blob = win32crypt.CryptProtectData(data, None, entropy, None, None, 0)
-    return "encdpapi:" + _b64(blob)
-
-
-def _dpapi_decrypt(token: str, aad: bytes) -> str:
-    import win32crypt  # type: ignore
-
-    if not token.startswith("encdpapi:"):
-        return token
-    blob = _require_bytes(token.split(":", 1)[1])
-    entropy = aad if aad else None
-    data = win32crypt.CryptUnprotectData(blob, None, entropy, None, None, 0)
-    return data.decode("utf-8")
-
-
-def _load_or_create_master_key_file(path: Path) -> bytes:
-    key_path = path.with_suffix(path.suffix + ".key")
+    Priority:
+    - Linux: /etc/machine-id or /var/lib/dbus/machine-id (as text bytes)
+    - macOS: IOPlatformUUID from ioreg (as text bytes)
+    - Fallback: MAC address from uuid.getnode()
+    """
     try:
-        if key_path.exists():
-            return key_path.read_bytes()
-        key = secrets.token_bytes(32)
-        key_path.write_bytes(key)
-        try:
-            os.chmod(key_path, 0o600)
-        except Exception:
-            pass
-        unified_print("master key file created", "secure", "key", level="info")
-        return key
-    except Exception as e:
-        raise RuntimeError(f"failed to prepare master key file: {e}")
+        if os.path.isfile("/etc/machine-id"):
+            return Path("/etc/machine-id").read_text(encoding="utf-8").strip().encode("utf-8")
+        if os.path.isfile("/var/lib/dbus/machine-id"):
+            return Path("/var/lib/dbus/machine-id").read_text(encoding="utf-8").strip().encode(
+                "utf-8"
+            )
+    except Exception:
+        pass
+
+    # macOS IOPlatformUUID
+    try:
+        if os.uname().sysname.lower() == "darwin":  # type: ignore[attr-defined]
+            import subprocess
+
+            out = subprocess.check_output([
+                "ioreg",
+                "-rd1",
+                "-c",
+                "IOPlatformExpertDevice",
+            ], text=True)
+            for line in out.splitlines():
+                if "IOPlatformUUID" in line:
+                    # format: "IOPlatformUUID" = "XXXX-XXXX-..."
+                    parts = line.split("=", 1)
+                    if len(parts) == 2:
+                        v = parts[1].strip().strip('"')
+                        if v:
+                            return v.encode("utf-8")
+    except Exception:
+        pass
+
+    # Last resort: MAC address
+    try:
+        import uuid
+
+        n = uuid.getnode()
+        return n.to_bytes(8, "big", signed=False)
+    except Exception:
+        # random fallback would break stability; raise to be explicit
+        raise RuntimeError("unable to obtain a stable machine identifier")
 
 
-def _aesgcm_encrypt(key: bytes, plaintext: str, aad: bytes) -> str:
+def _derive_machine_key(aad: bytes) -> bytes:
+    """Derive a 32-byte key from machine identifier using HKDF-SHA256.
+
+    salt uses AAD to bind to service+file, and info labels the context.
+    """
+    mid = _machine_identifier()
+    hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=aad, info=b"News2Docx/mach/v1")
+    return hkdf.derive(mid)
+
+
+# Legacy encgcm helpers removed.
+
+
+def _mach_encrypt(plaintext: str, aad: bytes) -> str:
+    key = _derive_machine_key(aad)
     aes = AESGCM(key)
     nonce = secrets.token_bytes(12)
     ct = aes.encrypt(nonce, plaintext.encode("utf-8"), aad)
-    blob = nonce + ct  # ct includes tag at tail
-    return "encgcm:" + _b64(blob)
+    return "encmach:" + _b64(nonce + ct)
 
 
-def _aesgcm_decrypt(key: bytes, token: str, aad: bytes) -> str:
-    if not token.startswith("encgcm:"):
+def _mach_decrypt(token: str, aad: bytes) -> str:
+    if not token.startswith("encmach:"):
         return token
     data = _require_bytes(token.split(":", 1)[1])
     nonce, ct = data[:12], data[12:]
+    key = _derive_machine_key(aad)
     aes = AESGCM(key)
     pt = aes.decrypt(nonce, ct, aad)
     return pt.decode("utf-8")
@@ -107,7 +134,7 @@ def _collect_sensitive_keys(cfg: Dict[str, Any]) -> List[str]:
 
 
 def _service_name(cfg: Dict[str, Any]) -> str:
-    # Kept for compatibility with AAD composition only
+    # Service name used in AAD composition
     sec = cfg.get("security") if isinstance(cfg, dict) else None
     if isinstance(sec, dict) and sec.get("keyring_service"):
         return str(sec["keyring_service"])
@@ -141,28 +168,22 @@ def secure_load_config(config_path: str) -> Dict[str, Any]:
     service = _service_name(cfg)
     sensitive = _collect_sensitive_keys(cfg)
 
-    # Determine actions before touching keyring
+    # Determine actions before touching storage
     should_persist = p.name == "config.yml"
-    need_decrypt = False
     need_encrypt = False
     for key in sensitive:
         val = cfg.get(key)
-        if isinstance(val, str) and val:
-            if val.startswith("encgcm:"):
-                need_decrypt = True
-            else:
-                if should_persist:
-                    need_encrypt = True
+        if isinstance(val, str) and val and not val.startswith("encmach:"):
+            if should_persist:
+                need_encrypt = True
 
-    if not (need_decrypt or need_encrypt):
+    if not need_encrypt and not any(
+        isinstance(cfg.get(k), str) and str(cfg.get(k)).startswith("encmach:") for k in sensitive
+    ):
         # Nothing to do; return as-is (e.g., config.example.yml)
         return cfg
 
     aad = f"{service}:{p.name}".encode("utf-8")
-    master: bytes | None = None
-    use_dpapi = _dpapi_available()
-    if not use_dpapi:
-        master = _load_or_create_master_key_file(p)
     modified = False
 
     for key in sensitive:
@@ -171,18 +192,9 @@ def secure_load_config(config_path: str) -> Dict[str, Any]:
         val = cfg.get(key)
         if not isinstance(val, str):
             continue
-        if isinstance(val, str) and val.startswith("encdpapi:") and use_dpapi:
+        if isinstance(val, str) and val.startswith("encmach:"):
             try:
-                dec = _dpapi_decrypt(val, aad)
-                cfg[key] = dec
-            except Exception:
-                unified_print(
-                    f"failed to decrypt field '{key}'", "secure", "decrypt", level="error"
-                )
-                raise
-        elif isinstance(val, str) and val.startswith("encgcm:") and not use_dpapi and master:
-            try:
-                dec = _aesgcm_decrypt(master, val, aad)
+                dec = _mach_decrypt(val, aad)
                 cfg[key] = dec
             except Exception:
                 unified_print(
@@ -191,11 +203,7 @@ def secure_load_config(config_path: str) -> Dict[str, Any]:
                 raise
         else:
             if should_persist:
-                if use_dpapi:
-                    enc = _dpapi_encrypt(val, aad)
-                else:
-                    assert master is not None
-                    enc = _aesgcm_encrypt(master, val, aad)
+                enc = _mach_encrypt(val, aad)
                 cfg[key] = val  # keep runtime plaintext
                 try:
                     import yaml  # type: ignore

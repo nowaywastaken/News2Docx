@@ -88,8 +88,10 @@ python -m news2docx.cli.main export --config config.yml --split/--no-split
 - `run_app()`：高 DPI 初始化、加载配置与日志、启动主窗口。
 
 安全配置（加密）：
-- `news2docx.infra.secure_config.secure_load_config(path)`：读取配置时，从系统凭据库（Keyring）加载/生成主密钥，对 `security.sensitive_keys` 指定的字段（默认：`openai_api_key`、`crawler_api_token`、`crawler_api_url`）透明解密；当目标文件为根目录 `config.yml` 且发现明文时，会自动就地加密并回写，磁盘不留明文。
-- 不会对 `config.example.yml` 回写，保证示例可读。
+- `news2docx.infra.secure_config.secure_load_config(path)`：
+  - 全平台统一且唯一方案：使用“机器码绑定”的 AES‑GCM（HKDF 从机器标识派生，不落盘），密文前缀 `encmach:`。
+  - 不再提供任何“历史密文”的兼容或迁移（如 DPAPI、encgcm 本地密钥文件）。
+- 当目标文件为根目录 `config.yml` 且发现明文字段时，会自动就地加密并回写；不会对 `config.example.yml` 回写。
 - 日志不会输出明文，仅提示“已加密/已解密”的元信息。
 
 UI 相关配置示例：
@@ -246,9 +248,25 @@ python -m news2docx.cli.main combine processed_news_*.json -o merged.json
 ## Development
 
 ```bash
-pytest -q
+# 统一测试入口（合并为单文件）
+python -m pytest -q
+
+# 可选冒烟测试
 python scripts/smoke.py
 ```
+
+## Package (PyInstaller)
+
+- 依赖安装：确保已安装 `pyinstaller`（已在 `requirements.txt` 中）。
+- 打包命令：
+
+```bash
+python scripts/build_pyinstaller.py
+```
+
+- 输出位置：`dist/news2docx/`（onedir 模式更稳定）。
+- 运行方式：在含有你的 `config.yml` 的目录下运行其中的可执行文件；或将 `config.yml` 放到可执行文件同级目录。
+- 安全：打包不会包含你的 `config.yml`（避免泄露密钥）。示例 `config.example.yml` 会被一并打包用于指引。
 
 ## License
 
