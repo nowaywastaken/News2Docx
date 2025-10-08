@@ -18,3 +18,4 @@ installer/output/*
 dist/
 build/
 *.exe
+config.yml.key
