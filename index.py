@@ -306,10 +306,18 @@ def run_app() -> None:
             self.link_settings.linkActivated.connect(lambda _: self.stack.setCurrentIndex(1))
             self.btn_run_all.clicked.connect(self._on_run_all)
 
+            # Realtime log bridge + progress
+            try:
+                self._install_log_bridge()
+            except Exception:
+                pass
+
             unified_print("ui ready", "ui", "startup", level="info")
 
         def _build_home_page(self) -> QWidget:
             from pathlib import Path
+
+            from PyQt6.QtWidgets import QProgressBar
 
             page = QWidget()
 
@@ -321,9 +329,31 @@ def run_app() -> None:
             contact.setGeometry(0, 0, 318, 36)
             contact.setOpenExternalLinks(True)
 
+            # Progress bar (absolute positioning) — leave more space under contact info
+            self.progress_bar = QProgressBar(page)
+            self.progress_bar.setGeometry(0, 46, 318, 10)
+            try:
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(0)
+                self.progress_bar.setTextVisible(False)
+                self.progress_bar.setStyleSheet(
+                    "QProgressBar{background:#e5e7eb;border:1px solid #d1d5db;height:10px;}"
+                    "QProgressBar::chunk{background:#4C7DFF;}"
+                )
+            except Exception:
+                pass
+
+            self.progress_label = QLabel("0%", page)
+            self.progress_label.setGeometry(0, 64, 318, 16)
+            self.progress_label.setStyleSheet("font-size:11px;color:#6b7280;")
+            try:
+                self.progress_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            except Exception:
+                pass
+
             self.log_view = QTextEdit(page)
-            # Expand log area upward a bit (start higher, taller)
-            self.log_view.setGeometry(0, 40, 318, 464)
+            # Leave more spacing and reduce height a bit more
+            self.log_view.setGeometry(0, 100, 318, 400)
             self.log_view.setReadOnly(True)
             self.log_view.setStyleSheet(
                 "background-color: #ffffff; border: 1px solid #e5e7eb; font-family: Consolas, monospace; font-size: 11px;"
@@ -340,12 +370,12 @@ def run_app() -> None:
             self.link_open_log.linkActivated.connect(lambda _: self._open_log_file())
             self.link_terminal_log.linkActivated.connect(lambda _: self._open_terminal_log())
 
+            # Realtime logging via handler; keep file tail timer disabled to avoid duplication
             self._log_tail_pos = 0
             self._log_path = str(Path.cwd() / "log.txt")
-            # File logging is disabled; keep timer inert if file absent
             self._timer = QTimer(self)
-            self._timer.timeout.connect(self._poll_log)
-            self._timer.start(1000)
+            # self._timer.timeout.connect(self._poll_log)
+            # self._timer.start(1000)
 
             return page
 
@@ -698,6 +728,165 @@ def run_app() -> None:
                 unified_print(f"config saved: {key} -> {new_val}", "ui", "config", level="info")
             except Exception as e:
                 unified_print(f"config save error: {e}", "ui", "error", level="error")
+
+        # --- Progress & log bridge ---
+        def _install_log_bridge(self) -> None:
+            import logging
+            from PyQt6.QtCore import QTimer, pyqtSignal
+
+            # Signals created dynamically on instance to keep minimal churn
+            # Using simple callables instead of defining pyqtSignal at class level
+            self._progress_value = 0  # 0-100 integer
+            self._progress_target = 0
+            self._progress_step = 1  # units per tick
+            self._phase = "idle"
+            self._total_articles = 0
+            self._done_articles = 0
+
+            def _set_target(v: int, step: int, phase: str, label: str) -> None:
+                v = max(0, min(100, int(v)))
+                self._progress_target = v
+                self._progress_step = max(1, int(step))
+                self._phase = phase
+                try:
+                    self.progress_label.setText(f"{v}% | {label}")
+                except Exception:
+                    pass
+
+            # Animation timer
+            self._progress_anim = QTimer(self)
+            self._progress_anim.setInterval(50)
+
+            def _tick() -> None:
+                try:
+                    if self._progress_value < self._progress_target:
+                        self._progress_value = min(
+                            self._progress_target, self._progress_value + self._progress_step
+                        )
+                        self.progress_bar.setValue(self._progress_value)
+                        # keep label percent in sync if phase label unchanged
+                        cur = self.progress_label.text() if self.progress_label.text() else ""
+                        if cur:
+                            parts = cur.split("|")
+                            tail = parts[1].strip() if len(parts) > 1 else ""
+                            self.progress_label.setText(f"{self._progress_value}% | {tail}")
+                except Exception:
+                    pass
+
+            self._progress_anim.timeout.connect(_tick)
+            self._progress_anim.start()
+
+            class _UiLogHandler(logging.Handler):
+                def __init__(self, ui: "MainWindow") -> None:
+                    super().__init__()
+                    self.ui = ui
+                    # open file in append mode, UTF-8
+                    try:
+                        self.fp = open(self.ui._log_path, "a", encoding="utf-8")
+                    except Exception:
+                        self.fp = None
+
+                def emit(self, record: logging.LogRecord) -> None:
+                    try:
+                        msg = record.getMessage()
+                        name = record.name or ""
+                        # Build a compact line similar to unified_print echo
+                        # Expect logger names like news2docx.<program>.<task>
+                        parts = name.split(".")
+                        program = parts[1] if len(parts) > 1 else ""
+                        task = parts[2] if len(parts) > 2 else ""
+                        line = f"[{program}][{task}] {msg}".strip()
+                        # write to file
+                        if self.fp:
+                            try:
+                                self.fp.write(line + "\n")
+                                self.fp.flush()
+                            except Exception:
+                                pass
+                        # append to UI log_view
+                        try:
+                            self.ui.log_view.append(line)
+                        except Exception:
+                            pass
+
+                        # Progress mapping
+                        lprog = program
+                        ltask = task
+                        text = msg
+                        # 1) Scrape phase 0-25 (uniform)
+                        if lprog == "ui" and ltask == "scrape" and "scrape start" in text:
+                            self.ui._progress_value = 0
+                            _set_target(25, 1, "scrape", "抓取中…")
+                        if lprog == "ui" and ltask == "scrape" and text.startswith("scrape saved"):
+                            _set_target(25, 2, "scrape", "抓取完成")
+
+                        # 2) Process phase start 30%
+                        if lprog == "ui" and ltask == "process" and "process start" in text:
+                            _set_target(30, 1, "process", "准备处理…")
+
+                        # 2.1) Batch start to get total count
+                        if lprog == "engine" and ltask == "batch" and "[TASK START]" in text:
+                            try:
+                                import json as _json
+
+                                payload = text.split("[TASK START]")[-1].strip()
+                                data = _json.loads(payload)
+                                self.ui._total_articles = int(data.get("count") or 0)
+                            except Exception:
+                                self.ui._total_articles = 0
+
+                        # 2.2) Article processing and results -> 35%..85%
+                        if lprog == "engine" and ltask == "article" and "processing article" in text:
+                            base = max(self.ui._progress_target, 35)
+                            _set_target(base, 1, "process", "处理中…")
+
+                        if lprog == "engine" and ltask == "article" and text.startswith("[RESULT]"):
+                            self.ui._done_articles += 1
+                            total = max(1, int(self.ui._total_articles or 1))
+                            ratio = max(0.0, min(1.0, float(self.ui._done_articles) / float(total)))
+                            target = int(35 + (85 - 35) * ratio)
+                            # keep smooth but responsive
+                            step = 2 if (target - self.ui._progress_value) > 5 else 1
+                            _set_target(target, step, "process", f"处理中…({self.ui._done_articles}/{total})")
+
+                        # 3) Process saved 90%
+                        if lprog == "ui" and ltask == "process" and text.startswith("processed saved"):
+                            _set_target(90, 1, "process", "处理结果已保存")
+
+                        # 4) Export 92% start, slow approach to 100
+                        if lprog == "ui" and ltask == "export" and text.startswith("export start"):
+                            _set_target(92, 1, "export", "导出中…")
+
+                        # export docx events -> move close to 98
+                        if lprog == "export" and ltask == "docx" and text.startswith("Exported DOCX"):
+                            # avoid jumping backwards
+                            target = max(self.ui._progress_target, 98)
+                            _set_target(target, 1, "export", "导出进行中…")
+
+                        # export done -> 100
+                        if lprog == "ui" and ltask == "export" and text.startswith("export per-article"):
+                            _set_target(100, 4, "done", "全部导出完成")
+                        if lprog == "ui" and ltask == "export" and text.startswith("export single"):
+                            _set_target(100, 4, "done", "导出完成")
+                    except Exception:
+                        pass
+
+                def close(self) -> None:  # type: ignore[override]
+                    try:
+                        if self.fp:
+                            self.fp.close()
+                    except Exception:
+                        pass
+                    super().close()
+
+            # Attach handler to root logger once
+            try:
+                root = logging.getLogger("")
+                # ensure handler is not duplicated across UI reloads
+                if not any(isinstance(h, _UiLogHandler) for h in root.handlers):
+                    root.addHandler(_UiLogHandler(self))
+            except Exception:
+                pass
 
         def _poll_log(self) -> None:
             from pathlib import Path
