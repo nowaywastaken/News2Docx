@@ -8,3 +8,8 @@ logs
 /.venv
 goal.md
 log.txt
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+.env
