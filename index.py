@@ -33,7 +33,32 @@ def load_app_config(config_path: str) -> Dict[str, Any]:
     """
     p = Path(config_path)
     if not p.exists():
-        raise FileNotFoundError("config.yml not found at project root")
+        # Auto-generate from example when missing
+        example_local = p.with_name("config.example.yml")
+        example_root = Path.cwd() / "config.example.yml"
+        example = example_local if example_local.exists() else example_root
+        if example.exists():
+            try:
+                content = example.read_text(encoding="utf-8")
+                p.write_text(content, encoding="utf-8")
+                unified_print(
+                    f"config.yml not found, created from {example.name}",
+                    "ui",
+                    "config",
+                    level="info",
+                )
+            except Exception as e:
+                unified_print(
+                    f"failed to create config.yml from example: {e}",
+                    "ui",
+                    "config",
+                    level="error",
+                )
+                raise
+        else:
+            raise FileNotFoundError(
+                "config.yml not found and config.example.yml is missing"
+            )
     data = secure_load_config(str(p))
     if not isinstance(data, dict):
         raise RuntimeError("Invalid config content")
