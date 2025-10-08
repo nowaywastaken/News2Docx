@@ -13,3 +13,8 @@ log.txt
 .ruff_cache/
 .DS_Store
 .env
+installer/output/
+installer/output/*
+dist/
+build/
+*.exe
