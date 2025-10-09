@@ -339,7 +339,7 @@ def run_app() -> None:
         def _build_home_page(self) -> QWidget:
             from pathlib import Path
 
-            from PyQt6.QtWidgets import QProgressBar
+            from PyQt6.QtWidgets import QProgressBar, QLineEdit, QFormLayout, QSizePolicy
 
             page = QWidget()
 
@@ -371,9 +371,9 @@ def run_app() -> None:
             except Exception:
                 pass
 
-            # Status label for progress text
+            # Status label for progress text (move above progress bar)
             self.progress_label = QLabel("", page)
-            self.progress_label.setGeometry(0, 40, 318, 16)
+            self.progress_label.setGeometry(0, 460, 318, 16)
             self.progress_label.setStyleSheet("font-size:11px;color:#6b7280;")
             try:
                 self.progress_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -381,24 +381,69 @@ def run_app() -> None:
                 pass
             self.progress_label.setVisible(True)
 
-            self.log_view = QTextEdit(page)
-            # Expand log area upward and leave room at bottom for progress bar
-            self.log_view.setGeometry(0, 40, 318, 430)
-            self.log_view.setReadOnly(True)
-            self.log_view.setStyleSheet(
-                "background-color: #ffffff; border: 1px solid #e5e7eb; font-family: Consolas, monospace; font-size: 11px;"
-            )
+            # Replace log area with Export settings form
+            export_panel = QWidget(page)
+            export_panel.setGeometry(0, 40, 318, 410)
+            form = QFormLayout()
+            try:
+                form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+                form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+            except Exception:
+                pass
+            export_panel.setLayout(form)
 
-            # Terminal log entry links
-            self.link_open_log = QLabel("<a href='#openlog'>打开日志文件</a>", page)
-            self.link_open_log.setGeometry(0, 508, 100, 18)
-            self.link_open_log.setOpenExternalLinks(False)
-            self.link_terminal_log = QLabel("<a href='#termlog'>终端查看日志</a>", page)
-            self.link_terminal_log.setGeometry(108, 508, 110, 18)
-            self.link_terminal_log.setOpenExternalLinks(False)
+            # Labels for export-related fields
+            _export_labels = {
+                "run_export": "运行后导出",
+                "export_split": "按篇导出",
+                "export_order": "段落顺序",
+                "export_mono": "仅中文",
+                "export_out_dir": "导出目录",
+                "export_first_line_indent_cm": "首行缩进(厘米)",
+                "export_font_zh_name": "中文字体",
+                "export_font_zh_size": "中文字号",
+                "export_font_en_name": "英文字体",
+                "export_font_en_size": "英文字号",
+                "export_title_bold": "标题加粗",
+                "export_title_size_multiplier": "标题字号倍率",
+            }
 
-            self.link_open_log.linkActivated.connect(lambda _: self._open_log_file())
-            self.link_terminal_log.linkActivated.connect(lambda _: self._open_terminal_log())
+            # Helper to add a field bound to config change handler
+            def _add_field(key: str) -> None:
+                if key not in self.config:
+                    return
+                editor = QLineEdit(export_panel)
+                editor.setText(str(self.config.get(key)))
+                try:
+                    sp = editor.sizePolicy()
+                    sp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+                    editor.setSizePolicy(sp)
+                except Exception:
+                    pass
+                editor.editingFinished.connect(lambda k=key, e=editor: self._on_conf_changed(k, e.text()))
+                lbl = QLabel(_export_labels.get(key, key))
+                try:
+                    lbl.setFixedWidth(120)
+                    lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                except Exception:
+                    pass
+                form.addRow(lbl, editor)
+
+            for k in [
+                "run_export",
+                "export_split",
+                "export_order",
+                "export_mono",
+                "export_out_dir",
+                "export_first_line_indent_cm",
+                "export_font_zh_name",
+                "export_font_zh_size",
+                "export_font_en_name",
+                "export_font_en_size",
+                "export_title_bold",
+                "export_title_size_multiplier",
+            ]:
+                _add_field(k)
 
             # Ensure progress widgets are above the log view and links (z-order)
             try:
@@ -407,13 +452,11 @@ def run_app() -> None:
             except Exception:
                 pass
 
-            # Realtime logging via handler (for display only; progress由Worker驱动)
+            # Realtime logging to file only; UI log removed
             self._log_tail_pos = 0
             self._log_path = str(Path.cwd() / "log.txt")
             self._timer = QTimer(self)
-            # self._timer.timeout.connect(self._poll_log)
-            # self._timer.start(1000)
-
+            
             return page
 
         def _build_settings_page(self, conf: Dict[str, Any]) -> QWidget:
@@ -423,45 +466,14 @@ def run_app() -> None:
             from PyQt6.QtWidgets import QLineEdit, QSizePolicy
 
             page = QWidget()
-            # Category links (absolute positioning)
-            cat_bar = QWidget(page)
-            cat_bar.setGeometry(0, 0, 318, 22)
-            # Only expose minimal settings in UI:
-            # - Scrape: only mode, service URL, token, noise keywords
-            # - Process / Export remain visible
-            # Hidden: 应用(app), 界面(ui), 其他(other)
-            # Merge Scrape + Process into a single page for simpler editing
-            cats = [
-                ("抓取/处理", "scrape_process"),
-                ("导出", "export"),
-            ]
-            self._cat_links: list[QLabel] = []
-            x = 0
-            try:
-                from PyQt6.QtGui import QFontMetrics
-
-                fm = QFontMetrics(cat_bar.font())
-            except Exception:
-                fm = None  # type: ignore
-            for i, (label, _k) in enumerate(cats):
-                link = QLabel(f"<a href='#cat{i}'>{label}</a>", cat_bar)
-                # Dynamically size link to avoid overlap (absolute positioning remains)
-                if fm is not None:
-                    try:
-                        tw = fm.horizontalAdvance(label)
-                        w = max(50, tw + 12)
-                    except Exception:
-                        w = 60
-                else:
-                    w = 60
-                link.setGeometry(x, 0, w, 20)
-                link.setOpenExternalLinks(False)
-                self._cat_links.append(link)
-                x += w + 10  # add small spacing to avoid overlap
+            # Settings page now only contains Scrape/Process; no category bar
+            # Keep internal structure with a single logical category key
+            cats = [("", "scrape_process")]
+            self._cat_links = []
 
             # Pages container
             container = QWidget(page)
-            container.setGeometry(0, 26, 318, 454)
+            container.setGeometry(0, 0, 318, 504)
             sub_stack = QStackedLayout()
             container.setLayout(sub_stack)
 
@@ -478,7 +490,7 @@ def run_app() -> None:
                     level="info",
                 )
             except Exception:
-                area_w, area_h = 318, 454
+                area_w, area_h = 318, 504
 
             self._editors: dict[str, QLineEdit] = {}
 
@@ -656,9 +668,7 @@ def run_app() -> None:
                 cat_to_index[cat_key] = sub_stack.count()
                 sub_stack.addWidget(w)
 
-            # Link handlers
-            for i, link in enumerate(self._cat_links):
-                link.linkActivated.connect(lambda _=None, idx=i: sub_stack.setCurrentIndex(idx))
+            # No category links to handle
 
             self._yaml_dump = lambda data: yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
             return page
