@@ -62,6 +62,16 @@ def load_app_config(config_path: str) -> Dict[str, Any]:
     data = secure_load_config(str(p))
     if not isinstance(data, dict):
         raise RuntimeError("Invalid config content")
+    # Ensure split-model keys exist for UI editing and engine selection.
+    # Backward compatible: default both to legacy `openai_model` if present.
+    try:
+        legacy = data.get("openai_model")
+        if "openai_model_general" not in data:
+            data["openai_model_general"] = legacy or ""
+        if "openai_model_translation" not in data:
+            data["openai_model_translation"] = legacy or ""
+    except Exception:
+        pass
     return data
 
 
@@ -141,7 +151,9 @@ def run_process(conf: Dict[str, Any], scraped_json_path: Optional[str]) -> str:
         raise RuntimeError("scraped_json_path is required")
 
     # Validate AI配置（早失败，明确提示）
-    # 需要：openai_api_key、openai_api_base（根URL或完整chat URL均可）、openai_model（config.yml）
+    # 需要：openai_api_key、openai_api_base（根URL或完整chat URL均可）、模型：
+    # - 新：openai_model_general + openai_model_translation
+    # - 旧：openai_model（兼容）
     ensure_openai_env(conf)
     missing: list[str] = []
     if not (os.getenv("OPENAI_API_KEY") or conf.get("openai_api_key")):
@@ -150,8 +162,13 @@ def run_process(conf: Dict[str, Any], scraped_json_path: Optional[str]) -> str:
         os.getenv("OPENAI_API_BASE") or conf.get("openai_api_base") or os.getenv("OPENAI_API_URL")
     ):
         missing.append("openai_api_base")
-    if not conf.get("openai_model"):
-        missing.append("openai_model")
+    # 模型判定：允许以下其一
+    has_legacy = bool(conf.get("openai_model"))
+    has_split = bool(conf.get("openai_model_general")) and bool(
+        conf.get("openai_model_translation")
+    )
+    if not (has_legacy or has_split):
+        missing.append("openai_model_general/openai_model_translation 或 openai_model")
     if missing:
         unified_print(
             f"AI配置缺失: {', '.join(missing)}；请在 config.yml 中补全（openai_api_base 建议为根URL，如 https://api.siliconflow.cn/v1）",
@@ -554,7 +571,9 @@ def run_app() -> None:
                 # process
                 "openai_api_base": "模型地址",
                 "openai_api_key": "模型密钥",
-                "openai_model": "模型ID",
+                "openai_model": "模型ID(兼容)",
+                "openai_model_general": "通用模型ID",
+                "openai_model_translation": "翻译模型ID",
                 "target_language": "目标语言",
                 "merge_short_paragraph_chars": "短段合并阈值",
                 # export

@@ -21,11 +21,13 @@ from news2docx.infra.logging import (
 )
 
 
-# OpenAI-Compatible configuration: no hardcoded model name
-def _load_model_and_base_from_config() -> Tuple[Optional[str], Optional[str]]:
-    """Load `openai_model` and `openai_api_base` from root config.yml if present.
+# OpenAI-Compatible configuration: support split general/translation models
+def _load_models_and_base_from_config() -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Load translation/general models and api base from root config.yml.
 
-    No defaults here; caller decides fallback/validation strategy.
+    Returns (model_translation, model_general, api_base). Each item can be None
+    if not present. Fallback to legacy `openai_model` for both when split keys
+    are absent. This preserves backward compatibility while enabling separation.
     """
     try:
         from pathlib import Path
@@ -34,13 +36,27 @@ def _load_model_and_base_from_config() -> Tuple[Optional[str], Optional[str]]:
 
         p = Path.cwd() / "config.yml"
         if not p.exists():
-            return None, None
+            return None, None, None
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
-            return None, None
-        return data.get("openai_model"), data.get("openai_api_base")
+            return None, None, None
+        legacy = data.get("openai_model")
+        m_t = data.get("openai_model_translation") or legacy
+        m_g = data.get("openai_model_general") or legacy
+        base = data.get("openai_api_base")
+        return m_t, m_g, base
     except Exception:
-        return None, None
+        return None, None, None
+
+
+def _get_translation_model_from_config() -> Optional[str]:
+    m_t, _m_g, _b = _load_models_and_base_from_config()
+    return m_t
+
+
+def _get_general_model_from_config() -> Optional[str]:
+    _m_t, m_g, _b = _load_models_and_base_from_config()
+    return m_g
 
 
 TARGET_WORD_MIN = 400
@@ -203,10 +219,9 @@ def call_ai_api(
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required")
-    # Resolve model from config if not provided
+    # Resolve model from config if not provided. Default to GENERAL model.
     if model is None:
-        m, _b = _load_model_and_base_from_config()
-        model = m
+        model = _get_general_model_from_config()
     if not model:
         raise RuntimeError("openai_model is required in config.yml (no backend default)")
     if max_tokens is None:
@@ -241,7 +256,7 @@ def call_ai_api(
                     time.sleep(wait / 1000.0)
             # Resolve final URL: explicit argument > env override > base from config
             base_env = os.getenv("OPENAI_API_BASE")
-            base_cfg = _load_model_and_base_from_config()[1]
+            base_cfg = _load_models_and_base_from_config()[2]
             base = (base_env or base_cfg or "").strip()
             if not base:
                 raise RuntimeError("缺少 OPENAI_API_BASE（或 config.yml: openai_api_base）")
@@ -367,7 +382,9 @@ def _adjust_word_count(
         )
         sys_p = "You are a professional news editor. Output strictly the clean body only."
         usr_p = instruction + "\n\n" + text
-        adjusted = call_ai_api(sys_p, usr_p, max_tokens=estimate_max_tokens(1))
+        adjusted = call_ai_api(
+            sys_p, usr_p, model=_get_general_model_from_config(), max_tokens=estimate_max_tokens(1)
+        )
         cfg = _load_cleaning_config()
         adjusted_clean, _rm, _k = _sanitize_meta(
             adjusted, cfg.get("prefixes", []), cfg.get("patterns", [])
@@ -414,7 +431,9 @@ def _translate_title(title: str, target_lang: str) -> str:
     )
     user_prompt = f"Translate to {target_lang}:\n\n{title}"
     try:
-        return call_ai_api(system_prompt, user_prompt, max_tokens=estimate_max_tokens(1))
+        return call_ai_api(
+            system_prompt, user_prompt, model=_get_translation_model_from_config(), max_tokens=estimate_max_tokens(1)
+        )
     except Exception:
         return title
 
@@ -441,7 +460,9 @@ def process_article(
     # Mark explicit stage: translation begins
     log_processing_step("engine", "stage", "translate start")
     sys_p, usr_p = build_translation_prompts(adjusted, target_lang)
-    translated_raw = call_ai_api(sys_p, usr_p)
+    translated_raw = call_ai_api(
+        sys_p, usr_p, model=_get_translation_model_from_config()
+    )
     translated_raw = ensure_paragraph_parity(translated_raw, adjusted)
     translated, rm2, kinds2 = _sanitize_meta(
         translated_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
@@ -457,7 +478,9 @@ def process_article(
         adjusted = adjusted_raw
         # Regenerate translation against the reverted English text
         sys_p2, usr_p2 = build_translation_prompts(adjusted, target_lang)
-        translated_raw2 = call_ai_api(sys_p2, usr_p2)
+        translated_raw2 = call_ai_api(
+            sys_p2, usr_p2, model=_get_translation_model_from_config()
+        )
         translated_raw2 = ensure_paragraph_parity(translated_raw2, adjusted)
         translated2, rm2b, kinds2b = _sanitize_meta(
             translated_raw2, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])

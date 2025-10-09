@@ -131,6 +131,10 @@ python -m news2docx.cli.main --help
 
 - 抓取：`crawler_mode`（remote|local）、`crawler_api_url`、`crawler_api_token`、`max_urls`、`concurrency`、`retry_hours`、`timeout`、`pick_mode`、`random_seed`、`db_path`、`noise_patterns`
 - 处理：`openai_api_base`、`openai_api_key`、`target_language`、`merge_short_paragraph_chars`
+  - 模型选择（支持分离）：
+    - `openai_model_general`：通用模型（英文编辑/控字等）
+    - `openai_model_translation`：翻译模型（标题翻译与正文翻译）
+    - 兼容：`openai_model`（如仅设置此字段，将同时用于上述两类场景）
 - 导出：`run_export`、`export_split`、`export_order`（`zh-en`|`en-zh`）、`export_mono`、`export_out_dir`、`export_first_line_indent_inch`、`export_font_*`、`export_title_bold`、`export_title_size_multiplier`
  - 处理净化：
    - `processing_forbidden_prefixes`：按行前缀丢弃（如 `Note:`、媒体名、广告提示等）
@@ -157,6 +161,10 @@ openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
 max_urls: 10
 export_split: true
 export_order: en-zh
+
+# 分离模型设置（推荐）
+openai_model_general: "gpt-4o-mini"
+openai_model_translation: "qwen-2.5-7b-instruct"
 ```
 
 ## Environment Vars

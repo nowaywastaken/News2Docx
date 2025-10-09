@@ -181,6 +181,44 @@ def test_now_stamp_format():
     assert len(ts) == 15 and ts[8] == "_"
 
 
+# ---- tests for split model selection (compat) ----
+
+
+def test_split_model_resolution(tmp_path, monkeypatch):
+    # Prepare a minimal config with split models
+    p = tmp_path / "config.yml"
+    p.write_text(
+        (
+            "openai_api_base: https://api.example.com/v1\n"
+            "openai_api_key: dummy\n"
+            "openai_model_general: gen-model\n"
+            "openai_model_translation: trans-model\n"
+        ),
+        encoding="utf-8",
+    )
+    # Use cwd to point engine's loader to our temp config
+    monkeypatch.chdir(tmp_path)
+    from news2docx.process.engine import (
+        _get_general_model_from_config,
+        _get_translation_model_from_config,
+    )
+
+    assert _get_general_model_from_config() == "gen-model"
+    assert _get_translation_model_from_config() == "trans-model"
+
+    # Legacy-only fallback should populate both
+    p.write_text(
+        (
+            "openai_api_base: https://api.example.com/v1\n"
+            "openai_api_key: dummy\n"
+            "openai_model: legacy-model\n"
+        ),
+        encoding="utf-8",
+    )
+    assert _get_general_model_from_config() == "legacy-model"
+    assert _get_translation_model_from_config() == "legacy-model"
+
+
 # ---- tests from test_engine_fallback_translation.py ----
 
 

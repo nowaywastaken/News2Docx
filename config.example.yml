@@ -51,7 +51,11 @@ noise_patterns: []                  # extra noise filters; enter plain text or r
 # Processing (OpenAI-compatible API). Model and API key are required.
 openai_api_base: "https://api.siliconflow.cn/v1"
 openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
-openai_model: "PUT_YOUR_MODEL_ID_HERE"      # e.g., gpt-4o-mini or vendor-specific
+# Optional split models (recommended): set both for precise control
+openai_model_general: "PUT_YOUR_GENERAL_MODEL_ID"      # e.g., gpt-4o-mini（英文编辑/压词）
+openai_model_translation: "PUT_YOUR_TRANSLATION_MODEL_ID"  # e.g., qwen-2.5-7b-instruct（翻译）
+# Legacy single model (backward compatible). If set, it is used as fallback for both above.
+openai_model: ""      # e.g., gpt-4o-mini or vendor-specific
 target_language: "Chinese"                  # target translation language
 merge_short_paragraph_chars: 80             # merge very short English paragraphs before translation
 
