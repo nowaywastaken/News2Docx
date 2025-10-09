@@ -131,7 +131,7 @@ python -m news2docx.cli.main --help
 
 - 抓取：`crawler_mode`（remote|local）、`crawler_api_url`、`crawler_api_token`、`max_urls`、`concurrency`、`retry_hours`、`timeout`、`pick_mode`、`random_seed`、`db_path`、`noise_patterns`
 - 处理：`openai_api_base`、`openai_api_key`、`target_language`、`merge_short_paragraph_chars`
-- 导出：`run_export`、`export_split`、`export_order`（`zh-en`|`en-zh`）、`export_mono`、`export_out_dir`、`export_first_line_indent_cm`、`export_font_*`、`export_title_bold`、`export_title_size_multiplier`
+- 导出：`run_export`、`export_split`、`export_order`（`zh-en`|`en-zh`）、`export_mono`、`export_out_dir`、`export_first_line_indent_inch`、`export_font_*`、`export_title_bold`、`export_title_size_multiplier`
  - 处理净化：
    - `processing_forbidden_prefixes`：按行前缀丢弃（如 `Note:`、媒体名、广告提示等）
    - `processing_forbidden_patterns`：按正则丢弃（如日期时间戳/媒体尾注）
@@ -154,7 +154,7 @@ crawler_api_url: "PUT_YOUR_CRAWLER_API_URL_HERE"
 crawler_api_token: "PUT_YOUR_CRAWLER_API_TOKEN_HERE"
 openai_api_base: "https://api.siliconflow.cn/v1"
 openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
-max_urls: 3
+max_urls: 10
 export_split: true
 export_order: en-zh
 ```

@@ -19,7 +19,11 @@ def _desktop_outdir() -> Path:
 def build_document_config(conf: Dict[str, Any]) -> DocumentConfig:
     order = str(conf.get("export_order") or "zh-en").lower()
     bilingual = not bool(conf.get("export_mono") or False)
-    first_line_indent_cm = float(conf.get("export_first_line_indent_cm") or 0.74)
+    # Use inches only (no cm compatibility)
+    try:
+        first_line_indent_inch = float(conf.get("export_first_line_indent_inch") or 0.2)
+    except Exception:
+        first_line_indent_inch = 0.2
     font_zh_name = str(conf.get("export_font_zh_name") or "SimSun")
     font_zh_size = float(conf.get("export_font_zh_size") or 10.5)
     font_en_name = str(conf.get("export_font_en_name") or "Cambria")
@@ -30,7 +34,7 @@ def build_document_config(conf: Dict[str, Any]) -> DocumentConfig:
     cfg = DocumentConfig(
         bilingual=bilingual,
         order=order,
-        first_line_indent_cm=first_line_indent_cm,
+        first_line_indent_inch=first_line_indent_inch,
         font_zh=FontConfig(name=font_zh_name, size_pt=font_zh_size),
         font_en=FontConfig(name=font_en_name, size_pt=font_en_size),
         title_size_multiplier=title_size_multiplier,

@@ -104,7 +104,7 @@ def run_scrape(conf: Dict[str, Any]) -> str:
         gdelt_timespan=(conf.get("gdelt_timespan") or "7d"),
         gdelt_max_per_call=int(conf.get("gdelt_max_per_call") or 50),
         gdelt_sort=(conf.get("gdelt_sort") or "datedesc"),
-        max_urls=int(conf.get("max_urls") or 1),
+        max_urls=int(conf.get("max_urls") or 10),
         concurrency=int(conf.get("concurrency") or 4),
         timeout=int(conf.get("timeout") or 30),
         pick_mode=str(conf.get("pick_mode") or "random"),
@@ -231,7 +231,6 @@ def run_app() -> None:
             QLabel,
             QPushButton,
             QStackedLayout,
-            QTextEdit,
             QWidget,
         )
     except Exception as e:
@@ -292,7 +291,12 @@ def run_app() -> None:
 
             self.input_count_display = QLineEdit(self)
             self.input_count_display.setGeometry(220, 36, 18, 28)
-            self.input_count_display.setText("1")  # default value = 1
+            # default from config; fallback to 10
+            try:
+                _init_count = int(self.config.get("max_urls") or 10)
+            except Exception:
+                _init_count = 10
+            self.input_count_display.setText(str(max(1, _init_count)))
             try:
                 self.input_count_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
             except Exception:
@@ -316,8 +320,8 @@ def run_app() -> None:
             self.stack = QStackedLayout()
             self.container.setLayout(self.stack)
 
-            # Prefer worker-driven progress over log-driven mapping
-            self._use_log_bridge_progress = False
+            # Drive UI progress via log bridge to reflect per-response updates
+            self._use_log_bridge_progress = True
             self.page_home = self._build_home_page()
             self.page_settings = self._build_settings_page(self.config)
             self.stack.addWidget(self.page_home)
@@ -339,7 +343,7 @@ def run_app() -> None:
         def _build_home_page(self) -> QWidget:
             from pathlib import Path
 
-            from PyQt6.QtWidgets import QProgressBar, QLineEdit, QFormLayout, QSizePolicy
+            from PyQt6.QtWidgets import QFormLayout, QLineEdit, QProgressBar, QSizePolicy
 
             page = QWidget()
 
@@ -381,6 +385,17 @@ def run_app() -> None:
                 pass
             self.progress_label.setVisible(True)
 
+            # Stage timer: show elapsed seconds for current phase next to the label
+            # Keep single responsibility: track base text and elapsed seconds
+            self._stage_timer = QTimer(self)
+            try:
+                self._stage_timer.setInterval(1000)  # 1s tick
+            except Exception:
+                pass
+            self._stage_timer.timeout.connect(self._on_stage_tick)
+            self._stage_base_text = ""
+            self._stage_start_ts = 0.0
+
             # Replace log area with Export settings form
             export_panel = QWidget(page)
             export_panel.setGeometry(0, 40, 318, 410)
@@ -399,7 +414,7 @@ def run_app() -> None:
                 "export_order": "段落顺序",
                 "export_mono": "仅中文",
                 "export_out_dir": "导出目录",
-                "export_first_line_indent_cm": "首行缩进(厘米)",
+                "export_first_line_indent_inch": "首行缩进(英寸)",
                 "export_font_zh_name": "中文字体",
                 "export_font_zh_size": "中文字号",
                 "export_font_en_name": "英文字体",
@@ -435,7 +450,7 @@ def run_app() -> None:
                 "export_order",
                 "export_mono",
                 "export_out_dir",
-                "export_first_line_indent_cm",
+                "export_first_line_indent_inch",
                 "export_font_zh_name",
                 "export_font_zh_size",
                 "export_font_en_name",
@@ -456,7 +471,7 @@ def run_app() -> None:
             self._log_tail_pos = 0
             self._log_path = str(Path.cwd() / "log.txt")
             self._timer = QTimer(self)
-            
+
             return page
 
         def _build_settings_page(self, conf: Dict[str, Any]) -> QWidget:
@@ -548,7 +563,7 @@ def run_app() -> None:
                 "export_order": "段落顺序",
                 "export_mono": "仅中文",
                 "export_out_dir": "导出目录",
-                "export_first_line_indent_cm": "首行缩进(厘米)",
+                "export_first_line_indent_inch": "首行缩进(英寸)",
                 "export_font_zh_name": "中文字体",
                 "export_font_zh_size": "中文字号",
                 "export_font_en_name": "英文字体",
@@ -817,13 +832,27 @@ def run_app() -> None:
                     finally:
                         self.finishedWithStatus.emit(ok, msg)
 
-            # Retrieve optional count override
-            count_override: Optional[int] = None
+            # Determine count override from stepper (always in range)
+            count_override: Optional[int] = self._get_count_value()
+
+            # Persist max_urls back to config.yml for full UI-Config sync
             try:
-                s = self.input_count_edit.text().strip()
-                count_override = int(s) if s else None
-            except Exception:
-                count_override = None
+                import yaml
+                from pathlib import Path as _Path
+
+                self.config["max_urls"] = int(count_override or 10)
+                _Path("config.yml").write_text(
+                    yaml.safe_dump(self.config, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
+                unified_print(
+                    f"config saved: max_urls -> {self.config['max_urls']}",
+                    "ui",
+                    "config",
+                    level="info",
+                )
+            except Exception as _e:
+                unified_print(f"config save error: {str(_e)}", "ui", "error", level="error")
 
             self._worker = ProgressWorker(self, self.config, count_override)
             self._worker.progressChanged.connect(self._on_progress_changed)
@@ -834,9 +863,56 @@ def run_app() -> None:
             try:
                 self.progress_bar.setValue(int(value))
                 if text:
-                    self.progress_label.setText(str(text))
+                    self._set_progress_text(str(text))
                 if not self.progress_label.isVisible():
                     self.progress_label.setVisible(True)
+            except Exception:
+                pass
+
+        # --- Stage timing helpers ---
+        def _set_progress_text(self, base_text: str) -> None:
+            """Set progress base text and (re)start per-stage timer.
+
+            When text changes (new phase), reset the counter and immediately
+            render "(0s)". Timer keeps updating every 1s.
+            """
+            try:
+                t = str(base_text).strip()
+            except Exception:
+                t = ""
+            # Reset only when phase text actually changes
+            if t != getattr(self, "_stage_base_text", ""):
+                import time as _time
+
+                self._stage_base_text = t
+                self._stage_start_ts = float(_time.monotonic())
+                try:
+                    if not self._stage_timer.isActive():
+                        self._stage_timer.start()
+                except Exception:
+                    pass
+                # Immediate render for responsiveness
+                self._render_stage_label(0)
+
+        def _on_stage_tick(self) -> None:
+            """Update label each second with elapsed seconds for current phase."""
+            try:
+                import time as _time
+
+                if not getattr(self, "_stage_base_text", ""):
+                    return
+                elapsed = int(max(0.0, float(_time.monotonic()) - float(self._stage_start_ts)))
+                self._render_stage_label(elapsed)
+            except Exception:
+                pass
+
+        def _render_stage_label(self, elapsed_seconds: int) -> None:
+            """Render label as: "<base>  (Xs)"."""
+            try:
+                base = getattr(self, "_stage_base_text", "")
+                # Use narrow spacing to fit small width
+                text = f"{base}  ({int(elapsed_seconds)}s)" if base else f"({int(elapsed_seconds)}s)"
+                self.progress_label.setText(text)
             except Exception:
                 pass
 
@@ -858,7 +934,7 @@ def run_app() -> None:
             return v
 
         def _set_count_value(self, v: int) -> None:
-            """Set the count display; keeps range [1, 999]."""
+            """Set the count display; keeps range [1, 999], and persist to config.yml."""
             try:
                 if v < 1:
                     v = 1
@@ -866,6 +942,24 @@ def run_app() -> None:
                     v = 999
                 self.input_count_display.setText(str(int(v)))
                 unified_print(f"count set -> {v}", "ui", "action", level="info")
+                # write-through to config for sync
+                try:
+                    import yaml
+                    from pathlib import Path as _Path
+
+                    self.config["max_urls"] = int(v)
+                    _Path("config.yml").write_text(
+                        yaml.safe_dump(self.config, allow_unicode=True, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    unified_print(
+                        f"config saved: max_urls -> {self.config['max_urls']}",
+                        "ui",
+                        "config",
+                        level="info",
+                    )
+                except Exception as _e:
+                    unified_print(f"config save error: {str(_e)}", "ui", "error", level="error")
             except Exception:
                 pass
 
@@ -944,9 +1038,9 @@ def run_app() -> None:
                 self._progress_target = v
                 self._progress_step = max(1, int(step))
                 self._phase = phase
+                # Update stage text with timer reset on phase change
                 try:
-                    # Hide percent numbers; keep optional status text only
-                    self.progress_label.setText(label)
+                    self._set_progress_text(label)
                 except Exception:
                     pass
                 # Immediate, minimal forward bump to ensure visible movement even if timer stalls
@@ -1014,83 +1108,87 @@ def run_app() -> None:
                         # UI updates must occur on the Qt main thread
                         def _apply_ui() -> None:
                             try:
-                                # append to UI log
+                                # append to UI log if present
                                 self.ui.log_view.append(line)
                             except Exception:
                                 pass
 
-                        # Progress mapping (safe inside UI thread)
-                        # Optionally disabled when Worker drives progress
-                        if not getattr(self.ui, "_use_log_bridge_progress", False):
-                            return
-                            lprog = program
-                            ltask = task
-                            text = msg
-                            # 1) Scrape phase 0-25 (uniform)
-                            if lprog == "ui" and ltask == "scrape" and "scrape start" in text:
-                                self.ui._progress_value = 0
-                                _set_target(25, 1, "scrape", "抓取中…")
-                            if lprog == "ui" and ltask == "scrape" and text.startswith("scrape saved"):
-                                _set_target(25, 2, "scrape", "抓取完成")
+                            # Progress mapping (run strictly in UI thread)
+                            if getattr(self.ui, "_use_log_bridge_progress", False):
+                                lprog = program
+                                ltask = task
+                                text = msg
+                                # 1) Scrape phase 0-25 (uniform)
+                                if lprog == "ui" and ltask == "scrape" and "scrape start" in text:
+                                    self.ui._progress_value = 0
+                                    _set_target(25, 1, "scrape", "抓取中…")
+                                if lprog == "ui" and ltask == "scrape" and text.startswith("scrape saved"):
+                                    _set_target(25, 2, "scrape", "抓取完成")
 
-                            # Be robust to non-UI scrape logs
-                            if lprog == "scrape" and ltask == "run" and "[TASK START]" in text:
-                                self.ui._progress_value = 0
-                                _set_target(20, 1, "scrape", "抓取中…")
-                            if lprog == "scrape" and ltask == "run" and "[TASK END]" in text:
-                                _set_target(25, 2, "scrape", "抓取完成")
+                                # Be robust to non-UI scrape logs
+                                if lprog == "scrape" and ltask == "run" and "[TASK START]" in text:
+                                    self.ui._progress_value = 0
+                                    _set_target(20, 1, "scrape", "抓取中…")
+                                if lprog == "scrape" and ltask == "run" and "[TASK END]" in text:
+                                    _set_target(25, 2, "scrape", "抓取完成")
 
-                            # 2) Process phase start 30%
-                            if lprog == "ui" and ltask == "process" and "process start" in text:
-                                _set_target(30, 1, "process", "准备处理…")
+                                # 2) Process phase start 30%
+                                if lprog == "ui" and ltask == "process" and "process start" in text:
+                                    _set_target(30, 1, "process", "准备处理…")
 
-                            # 2.1) Batch start to get total count
-                            if lprog == "engine" and ltask == "batch" and "[TASK START]" in text:
-                                try:
-                                    import json as _json
+                                # 2.1) Batch start to get total count
+                                if lprog == "engine" and ltask == "batch" and "[TASK START]" in text:
+                                    try:
+                                        import json as _json
 
-                                    payload = text.split("[TASK START]")[-1].strip()
-                                    data = _json.loads(payload)
-                                    self.ui._total_articles = int(data.get("count") or 0)
-                                except Exception:
-                                    self.ui._total_articles = 0
+                                        payload = text.split("[TASK START]")[-1].strip()
+                                        data = _json.loads(payload)
+                                        self.ui._total_articles = int(data.get("count") or 0)
+                                    except Exception:
+                                        self.ui._total_articles = 0
 
-                            # 2.2) Article processing and results -> 35%..85%
-                            if lprog == "engine" and ltask == "article" and "processing article" in text:
-                                base = max(self.ui._progress_target, 35)
-                                _set_target(base, 1, "process", "处理中…")
+                                # 2.2) Article processing and results -> 35%..85%
+                                if lprog == "engine" and ltask == "article" and "processing article" in text:
+                                    base = max(self.ui._progress_target, 35)
+                                    _set_target(base, 1, "process", "处理中…")
 
-                            if lprog == "engine" and ltask == "article" and text.startswith("[RESULT]"):
-                                self.ui._done_articles += 1
-                                total = max(1, int(self.ui._total_articles or 1))
-                                ratio = max(0.0, min(1.0, float(self.ui._done_articles) / float(total)))
-                                target = int(35 + (85 - 35) * ratio)
-                                step = 2 if (target - self.ui._progress_value) > 5 else 1
-                                _set_target(
-                                    target, step, "process", f"处理中…({self.ui._done_articles}/{total})"
-                                )
+                                # Distinguish preprocess vs translation inside processing stage
+                                if lprog == "engine" and ltask == "stage" and "preprocess start" in text:
+                                    _set_target(self.ui._progress_target, 1, "process", "预处理…")
+                                if lprog == "engine" and ltask == "stage" and "translate start" in text:
+                                    _set_target(self.ui._progress_target, 1, "process", "翻译进行中…")
 
-                            # 3) Process saved 90%
-                            if lprog == "ui" and ltask == "process" and text.startswith("processed saved"):
-                                _set_target(90, 1, "process", "处理结果已保存")
-                            if lprog == "engine" and ltask == "batch" and "[TASK END]" in text:
-                                # Batch completes -> close to export phase
-                                _set_target(90, 1, "process", "处理结果已保存")
+                                if lprog == "engine" and ltask == "article" and text.startswith("[RESULT]"):
+                                    self.ui._done_articles += 1
+                                    total = max(1, int(self.ui._total_articles or 1))
+                                    ratio = max(0.0, min(1.0, float(self.ui._done_articles) / float(total)))
+                                    target = int(35 + (85 - 35) * ratio)
+                                    step = 2 if (target - self.ui._progress_value) > 5 else 1
+                                    _set_target(
+                                        target, step, "process", f"已收到响应…({self.ui._done_articles}/{total})"
+                                    )
 
-                            # 4) Export 92% start, slow approach to 100
-                            if lprog == "ui" and ltask == "export" and text.startswith("export start"):
-                                _set_target(92, 1, "export", "导出中…")
+                                # 3) Process saved 90%
+                                if lprog == "ui" and ltask == "process" and text.startswith("processed saved"):
+                                    _set_target(90, 1, "process", "处理结果已保存")
+                                if lprog == "engine" and ltask == "batch" and "[TASK END]" in text:
+                                    # Batch completes -> close to export phase
+                                    _set_target(90, 1, "process", "处理结果已保存")
 
-                            # export docx events -> move close to 98
-                            if lprog == "export" and ltask == "docx" and text.startswith("Exported DOCX"):
-                                target2 = max(self.ui._progress_target, 98)
-                                _set_target(target2, 1, "export", "导出进行中…")
+                                # 4) Export 92% start, slow approach to 100
+                                if lprog == "ui" and ltask == "export" and text.startswith("export start"):
+                                    _set_target(92, 1, "export", "导出中…")
 
-                            # export done -> 100
-                            if lprog == "ui" and ltask == "export" and text.startswith("export per-article"):
-                                _set_target(100, 4, "done", "全部导出完成")
-                            if lprog == "ui" and ltask == "export" and text.startswith("export single"):
-                                _set_target(100, 4, "done", "导出完成")
+                                # export docx events -> move close to 98
+                                if lprog == "export" and ltask == "docx" and text.startswith("Exported DOCX"):
+                                    target2 = max(self.ui._progress_target, 98)
+                                    _set_target(target2, 1, "export", "导出进行中…")
+
+                                # export done -> 100
+                                if lprog == "ui" and ltask == "export" and text.startswith("export per-article"):
+                                    _set_target(100, 4, "done", "全部导出完成")
+                                if lprog == "ui" and ltask == "export" and text.startswith("export single"):
+                                    _set_target(100, 4, "done", "导出完成")
 
                         # Post the UI update to main thread event loop
                         _QTimer.singleShot(0, _apply_ui)

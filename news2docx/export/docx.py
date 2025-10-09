@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Inches, Pt
 
 from news2docx.infra.logging import unified_print
 
@@ -35,8 +35,8 @@ class FontConfig:
 
 @dataclass
 class DocumentConfig:
-    # First-line indent equals roughly two characters at 10.5pt (~0.74 cm)
-    first_line_indent_cm: float = 0.74
+    # First-line indent in inches (default 0.2 inch)
+    first_line_indent_inch: float = 0.2
     font_zh: FontConfig = field(default_factory=lambda: FontConfig(name="SimSun", size_pt=10.5))
     font_en: FontConfig = field(default_factory=lambda: FontConfig(name="Cambria", size_pt=10.5))
     title_size_multiplier: float = 1.0
@@ -155,7 +155,7 @@ class DocumentWriter:
             if prev_text is not None and text == prev_text:
                 continue
             p = doc.add_paragraph()
-            p.paragraph_format.first_line_indent = Cm(self.cfg.first_line_indent_cm)
+            p.paragraph_format.first_line_indent = Inches(self.cfg.first_line_indent_inch)
             r = p.add_run(text)
             self._apply_font(r, zh=zh)
             prev_text = text

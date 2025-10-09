@@ -424,6 +424,8 @@ def process_article(
 ) -> Dict[str, Any]:
     start = time.time()
     log_processing_step("engine", "article", f"processing article {article.index}")
+    # Mark explicit stage: preprocess begins
+    log_processing_step("engine", "stage", "preprocess start")
 
     # Step 1: word adjust
     adjusted_raw, final_wc = _adjust_word_count(article.content)
@@ -436,6 +438,8 @@ def process_article(
     # Merge short English paragraphs to reduce excessive breaks
     adjusted = _merge_short_paragraphs_text(adjusted, max_chars=int(merge_short_chars or 80))
     # Step 2: translation (initial pass)
+    # Mark explicit stage: translation begins
+    log_processing_step("engine", "stage", "translate start")
     sys_p, usr_p = build_translation_prompts(adjusted, target_lang)
     translated_raw = call_ai_api(sys_p, usr_p)
     translated_raw = ensure_paragraph_parity(translated_raw, adjusted)
