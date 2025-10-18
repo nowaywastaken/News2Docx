@@ -1,184 +1,134 @@
 # News2Docx
 
-轻量、可配置的英文新闻到 DOCX 工具：抓 URL、并发抓正文、AI 控字与翻译、导出规范排版文档。
+轻量、可配置的英文新闻到 DOCX 工具：抓取 URL、并发抓正文、AI 清洗与翻译，一键导出规范排版文档（Rich TUI）。
 
 ![python](https://img.shields.io/badge/python-3.11%2B-blue.svg) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
-English summary: Fetch English news, condense to target length, translate to Chinese, and export nicely formatted DOCX via a Rich-based TUI.
+English summary: Fetch English news, clean and translate to Chinese with free models, then export nicely formatted DOCX via a Rich TUI.
 
-## Features
+## 项目概览
 
-- 简洁：单命令端到端，或按阶段拆分运行。
-- 抓取模式：仅本地（直连 GDELT Doc 2.0）。
-- 并发与去噪：内置站点选择器 + 噪声过滤，支持覆盖自定义选择器。
-- 两步 AI 流程：字数调整 400–450 词 + 精准段落对齐翻译（OpenAI-Compatible）。
-- DOCX 导出：标题居中、首行缩进、可配中英字体；合并导出或按篇拆分。
-- 可移植：Windows/macOS/Linux；配置文件与环境变量双通道。
+- 一键端到端：Rich TUI 提供抓取 → 处理 → 导出全流程。
+- 抓取稳定：直连 GDELT Doc 2.0，内置站点清单与内容选择器，可通过文件覆盖。
+- 并发与去噪：多线程抓取，启发式噪声清理（登录提示/版权/广告等）。
+- AI 流水线（免费通道）：自动选择硅基流动免费模型并发首个成功结果；段落对齐翻译；最小词数筛选与清洗。
+- DOCX 导出：每篇独立导出，英文在前→中文在后；标题居中、首行缩进；中英文字体可配；标题默认加粗。
+- 可运维：强制 HTTPS、健康检查、统一日志与本地缓存。
 
-## Requirements
+## 快速开始
 
+### 依赖
 - Python 3.11+
-- 可访问外网（抓取端点与 LLM 接口）
+- 可访问外网（GDELT 与硅基流动 API）；仅使用 HTTPS 连接
 
-## Install
-
-Windows PowerShell：
-
-```powershell
+### 安装
+```bash
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-macOS/Linux：
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install -r requirements-dev.txt  # 开发者可选
-```
-
-可选冒烟（不联网，仅验证导出链路）：
-
-```bash
-python scripts/smoke.py
-```
-
-## Quick Start
-
-1) 编辑配置 `config.yml`，至少填入：
-
-- `openai_api_key`（OpenAI-Compatible，必填）
-
-2) 端到端运行（Rich TUI）：
-
+### 运行（最短路径）
 ```bash
 python index.py
 ```
+- 首次启动会提示粘贴 API Key（硅基流动）。也可预先设置环境变量：
+  - Bash: `export SILICONFLOW_API_KEY=your_key`
+  - PowerShell: `$env:SILICONFLOW_API_KEY = "your_key"`
 
-## UI（Rich）
-
-- 启动：`python index.py` 或 `python -m news2docx.tui.tui`（自动读取根目录 `config.yml`）
-- 功能：一键运行；分阶段运行（抓取/处理/导出）；查看与少量编辑关键配置；可基于最近上下文重试
-- 日志：程序启动前清空根目录 `log.txt`；运行过程中同时写入终端与 `log.txt`
-
-函数说明（index.py）：
-- `load_app_config(config_path)`：加载配置（严格读取指定路径）。
-- `prepare_logging(log_file)`：初始化日志（终端 + `log.txt`）。
-- `run_scrape(conf)`：执行抓取，保存 `scraped_news_*.json`。
-- `run_process(conf, scraped_json_path)`：两步处理，写入 `runs/<id>/processed.json`。
-- `run_export(conf, processed_json_path)`：按配置导出 DOCX（单文件或分篇）。
-
-## UI（Rich TUI）
-
-- 启动：`python -m news2docx.tui.tui`
-- 功能：
-  - 一键运行：抓取 → 处理 → 导出，展示阶段进度与耗时
-  - 配置：查看/修改关键配置（openai_api_base/Key、模型与基础参数）
-  - 体检：检查 OPENAI_API_KEY、openai_api_base(HTTPS)、端点连通、导出与 runs 目录
-  - 退出
-- 日志：沿用 `log.txt` 与终端同步输出；异常时在面板提示并引导查看日志。
-
-安全配置：已移除字段级加密功能。`secure_load_config` 仅做普通配置读取，不会修改文件。
-
-（UI 相关配置项已移除，不再需要 app/ui 设置）
-
-（项目已全面改用 Rich TUI，CLI 已移除）
-
-## Config
-
-参考示例见 `config.yml`，关键字段：
-
-- 抓取：`max_urls`、`concurrency`、`retry_hours`、`timeout`、`pick_mode`、`random_seed`、`db_path`、`noise_patterns`（已在代码写死，此处设置不再生效）
-- 处理：`openai_api_base`、`openai_api_key`、`target_language`、`merge_short_paragraph_chars`
-  - 模型选择（支持分离）：
-    - `openai_model_general`：通用模型（英文编辑/控字等）
-    - `openai_model_translation`：翻译模型（标题翻译与正文翻译）
-    - 兼容：`openai_model`（如仅设置此字段，将同时用于上述两类场景）
-- 导出：`run_export`、`export_split`、`export_order`（`zh-en`|`en-zh`）、`export_mono`、`export_out_dir`、`export_first_line_indent_inch`、`export_font_*`、`export_title_bold`、`export_title_size_multiplier`
- - 处理净化：
-   - `processing_forbidden_prefixes`：按行前缀丢弃（如 `Note:`、媒体名、广告提示等）
-   - `processing_forbidden_patterns`：按正则丢弃（如日期时间戳/媒体尾注）
-   - `processing_min_words_after_clean`：清理后英文最小词数（过低则回退清理前结果）
-
-示例（节选）：
-
+### 最小配置（自动创建）
+首次运行若不存在 `config.yml`，会自动生成最小模板；常用字段示例：
 ```yaml
-openai_api_base: "https://api.siliconflow.cn/v1"
-openai_api_key: "PUT_YOUR_OPENAI_COMPATIBLE_API_KEY_HERE"
-max_urls: 10
-export_split: true
-export_order: en-zh
-
-# 分离模型设置（推荐）
-openai_model_general: "gpt-4o-mini"
-openai_model_translation: "qwen-2.5-7b-instruct"
+openai_api_key: ""
+processing_word_min: 350
+merge_short_paragraph_chars: 80
+export_font_zh_name: 宋体
+export_font_zh_size: 10.5
+export_font_en_name: Cambria
+export_font_en_size: 10.5
+export_title_bold: true
 ```
 
-## Environment Vars
+## 使用示例与输出
 
-- 处理：`OPENAI_API_KEY`、`OPENAI_API_BASE`、`OPENAI_MODEL`、`CONCURRENCY`、`N2D_CACHE_DIR`、`OPENAI_MIN_INTERVAL_MS`、`MAX_TOKENS_HARD_CAP`
-- 其他：`SCRAPER_SELECTORS_FILE`
+- 启动 TUI：`python index.py`
+- 体检：在主菜单选择“体检”检查网络、API Key、GDELT 可达性以及导出/运行目录。
+- 路径与产物：
+  - 抓取与处理：`runs/<run_id>/scraped.json`、`runs/<run_id>/processed.json`
+  - 导出目录：桌面 `Desktop/英文新闻稿`（自动创建）
+  - 日志：根目录 `log.txt`（控制台与文件双写，启动前清空旧日志）
 
-Windows PowerShell：
+## 配置与环境变量
 
-```powershell
-$env:OPENAI_API_KEY = "your_api_key"
-$env:OPENAI_API_BASE = "https://api.siliconflow.cn/v1"
-```
+说明：部分参数已在代码层固定（如 API Base、导出目录、并发安全上限等），下列项为常用可调参数：
 
-Bash：
+- 处理相关（config.yml）
+  - `openai_api_key`：硅基流动/OPENAI 兼容 Key（也可用环境变量）
+  - `processing_word_min`：英文最小词数下限（低于该值的文章在免费通道会被跳过）
+  - `merge_short_paragraph_chars`：合并短段（基于词数的近似控制）
+  - `processing_forbidden_prefixes`：按前缀行丢弃
+  - `processing_forbidden_patterns`：按正则行丢弃
+- 导出相关（config.yml）
+  - `export_font_zh_name`/`export_font_zh_size`、`export_font_en_name`/`export_font_en_size`
+  - `export_title_bold`：标题是否加粗
+- 环境变量（示例）
+  - 密钥：`SILICONFLOW_API_KEY`（优先）或 `OPENAI_API_KEY`
+  - 选择器覆盖：`SCRAPER_SELECTORS_FILE=/path/to/selectors.yml`
+  - AI 调用：`N2D_CHAT_TIMEOUT`（默认20秒）、`OPENAI_MIN_INTERVAL_MS`（限速），`MAX_TOKENS_HARD_CAP`
+  - 词数下限（可替代 config）：`N2D_WORD_MIN`
+
+固定策略（不可改）：
+- OpenAI-Compatible Base 固定为 `https://api.siliconflow.cn/v1`（强制 HTTPS）
+- 默认“按篇导出”，每篇“英文在前、中文在后”
+- 导出目录固定：桌面 `Desktop/英文新闻稿`
+
+## 健康检查（TUI 内置）
+
+- 网络连通性（Cloudflare 探测）
+- 硅基流动 API Key 校验（/user/info）
+- GDELT 基础可达与最小查询
+- 导出目录与 `runs/` 目录可写性
+
+## 常见问题（FAQ）
+
+- Q：启动提示缺少 API Key？
+  - A：在 TUI 内粘贴，或设置 `SILICONFLOW_API_KEY`/`OPENAI_API_KEY` 后重启。
+- Q：GDELT 访问异常或限流？
+  - A：稍后重试；或更换网络环境。体检会展示 HTTP 状态以便定位。
+- Q：导出文件在哪？
+  - A：统一导出到桌面 `Desktop/英文新闻稿`；每篇新闻一个 DOCX 文件。
+- Q：如何调整中英文的字体与字号？
+  - A：在 `config.yml` 中修改 `export_font_*` 字段，保存后重试导出。
+- Q：如何清除已抓网址缓存以强制重新抓取？
+  - A：TUI 主菜单选择“清除已抓网址缓存”。
+- Q：如何自定义站点选择器？
+  - A：编写选择器配置文件并通过 `SCRAPER_SELECTORS_FILE` 指定路径。
+
+## 贡献指南（简版）
+
+- 分支：从 `main` 派生特性分支；PR 前请先关联 Issue。
+- 规范：Ruff（lint）+ Black（格式），行宽 100；类型检查（mypy，若使用）。
+- 测试：新增/变更必须补充或更新测试；统一入口 `python -m pytest -q`。
+- 提交：清晰的动机与“为什么”；避免堆叠无关改动。
+
+（更详细流程将补充到 CONTRIBUTING.md）
+
+## 开发与测试
 
 ```bash
-export OPENAI_API_KEY="your_api_key"
-export OPENAI_API_BASE="https://api.siliconflow.cn/v1"
-```
-
-## Crawler
-
-仅保留本地直连 GDELT Doc 2.0；站点清单与查询参数将随爬虫重写一并调整（当前配置项已不再读取）。
-
-文档与 UML：`docs/uml.wsd`（PlantUML）
-
-（使用 TUI 执行一键或分阶段操作，无需 CLI 示例）
-
-## Troubleshooting
-
-- 缺少 `OPENAI_API_KEY`：在配置或环境变量中提供；TUI 启动时会自动进行健康检查并提示连通性。
-- 无法直连 GDELT：请确保网络可达或调整 `gdelt_timespan` 等参数。
-- 导出目录：默认 `Desktop/英文新闻稿`（若未显式配置 `export_out_dir`）。
-
-## Server (Optional)
-
-- `server/index.py` 提供云函数事件函数示例，返回近 7 天英文新闻 URL（基于 GDELT Doc 2.0）。
-- 站点清单：`server/news_website.txt`；可用 `SITES_FILE` 指定外部路径。
-- 云端环境变量：`SITES`、`TIMESPAN`、`MAX_PER_CALL`、`SORT`。
-- 返回结构：`{"count": N, "urls": ["https://..."]}`。
-
-## Development
-
-```bash
-# 统一测试入口（合并为单文件）
+# 运行测试
 python -m pytest -q
 
-# 可选冒烟测试
-python scripts/smoke.py
+# 代码检查与格式化（可选）
+ruff check .
+ruff format .
 ```
 
-## Package (PyInstaller)
+## 版本日志
 
-- 依赖安装：确保已安装 `pyinstaller`（已在 `requirements.txt` 中）。
-- 打包命令：
+将随后续版本补充 `CHANGELOG.md`，记录新增、修复与潜在破坏性变更。
 
-```bash
-python scripts/build_pyinstaller.py
-```
-
-- 输出位置：`dist/news2docx/`（onedir 模式更稳定）。
-- 运行方式：在含有你的 `config.yml` 的目录下运行其中的可执行文件；或将 `config.yml` 放到可执行文件同级目录。
-- 安全：打包不会包含你的 `config.yml`（避免泄露密钥）。示例 `config.example.yml` 会被一并打包用于指引。
-
-## License
+## 许可证
 
 暂未声明开源许可证；在生产/商用前请与作者确认授权条款。
+
