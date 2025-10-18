@@ -41,8 +41,6 @@ def load_env() -> Dict[str, Any]:
     """从环境变量读取配置。"""
     env = os.environ
     d: Dict[str, Any] = {
-        "crawler_api_url": env.get("CRAWLER_API_URL"),
-        "crawler_api_token": env.get("CRAWLER_API_TOKEN"),
         # OpenAI-Compatible envs only
         "openai_api_key": env.get("OPENAI_API_KEY"),
         "openai_api_base": env.get("OPENAI_API_BASE"),

@@ -1,0 +1,4 @@
+ruff==0.13.3
+black==24.8.0
+pytest==8.3.2
+pyinstaller==6.10.0

@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from news2docx.core.utils import now_stamp
+from news2docx.ai.selector import (
+    affordable_chat_models,
+    free_chat_models,
+    set_runtime_models_override,
+)
 from news2docx.infra.logging import (
     log_error,
     log_processing_result,
@@ -60,7 +65,8 @@ def _get_general_model_from_config() -> Optional[str]:
 
 
 TARGET_WORD_MIN = 400
-TARGET_WORD_MAX = 450
+# 放弃上限：仅保留下限，内部如需“max”一律视为极大值
+TARGET_WORD_MAX = 10**9
 DEFAULT_CONCURRENCY = int(os.getenv("CONCURRENCY", "4"))
 
 _CACHE_DIR = os.getenv("N2D_CACHE_DIR", ".n2d_cache")
@@ -129,10 +135,52 @@ def _load_cleaning_config() -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         out["prefixes"] = list(data.get("processing_forbidden_prefixes") or [])
         out["patterns"] = list(data.get("processing_forbidden_patterns") or [])
-        out["min_words"] = int(data.get("processing_min_words_after_clean") or 200)
+        # min_words 与 processing_word_min 对齐
+        try:
+            mn, _mx = _load_word_bounds()
+            out["min_words"] = int(mn)
+        except Exception:
+            out["min_words"] = 200
         return out
     except Exception:
-        return {"prefixes": [], "patterns": [], "min_words": 200}
+        # 环境兜底获取 min_words
+        try:
+            mn, _mx = _load_word_bounds()
+            return {"prefixes": [], "patterns": [], "min_words": int(mn)}
+        except Exception:
+            return {"prefixes": [], "patterns": [], "min_words": 200}
+
+
+def _load_word_bounds() -> Tuple[int, int]:
+    """加载英文原文最小字数（已放弃上限）。
+
+    优先级：
+    - config.yml: processing_word_min（忽略 processing_word_max）
+    - 环境变量：N2D_WORD_MIN（忽略 N2D_WORD_MAX）
+    - 默认常量：TARGET_WORD_MIN
+    返回 (min, very_large_max) 以兼容旧签名。
+    """
+    try:
+        from pathlib import Path
+        import yaml  # type: ignore
+
+        p = Path.cwd() / "config.yml"
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {}
+        if isinstance(data, dict):
+            mn = data.get("processing_word_min")
+            if isinstance(mn, int) and mn >= 1:
+                return mn, TARGET_WORD_MAX
+    except Exception:
+        pass
+    try:
+        mn_s = os.getenv("N2D_WORD_MIN")
+        if mn_s:
+            mn = int(mn_s)
+            if mn >= 1:
+                return mn, TARGET_WORD_MAX
+    except Exception:
+        pass
+    return TARGET_WORD_MIN, TARGET_WORD_MAX
 
 
 def _sanitize_meta(
@@ -215,18 +263,81 @@ def call_ai_api(
     url: Optional[str] = None,
     max_tokens: Optional[int] = None,
 ) -> str:
-    # OpenAI-Compatible envs only
-    api_key = api_key or os.getenv("OPENAI_API_KEY")
+    # Auto-select SiliconFlow free chat models with concurrency when model is None.
+    api_key = api_key or os.getenv("SILICONFLOW_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required")
-    # Resolve model from config if not provided. Default to GENERAL model.
-    if model is None:
-        model = _get_general_model_from_config()
-    if not model:
-        raise RuntimeError("openai_model is required in config.yml (no backend default)")
+        raise RuntimeError("SILICONFLOW_API_KEY (或 OPENAI_API_KEY) 缺失")
     if max_tokens is None:
         max_tokens = estimate_max_tokens(1)
 
+    # Cache: when model is None, use 'auto' tag to increase hit rate
+    key_src = json.dumps(
+        {"m": model or "auto", "u": user_prompt, "s": system_prompt, "t": max_tokens},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    cache_key = hashlib.sha256(key_src).hexdigest()
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    # Respect minimal interval between calls (best-effort)
+    global _LAST_CALL_MS
+    if _AI_MIN_INTERVAL_MS > 0:
+        now_ms = int(time.time() * 1000)
+        wait = _AI_MIN_INTERVAL_MS - max(0, now_ms - _LAST_CALL_MS)
+        if wait > 0:
+            time.sleep(wait / 1000.0)
+
+    if model is None:
+        from news2docx.ai.chat import chat_first
+        # 允许通过环境变量调整超时（默认20s）
+        _timeout = int(os.getenv("N2D_CHAT_TIMEOUT", "20") or 20)
+        try:
+            content = chat_first(
+                system_prompt,
+                user_prompt,
+                models=None,
+                api_key=api_key,
+                max_tokens=max_tokens,
+                timeout=_timeout,
+            )
+            _LAST_CALL_MS = int(time.time() * 1000)
+            _cache_set(cache_key, content)
+            return content
+        except Exception:
+            # 保护性回退：顺序尝试少量稳定模型（避免整体失败）
+            try:
+                from news2docx.ai.selector import free_chat_models
+
+                pool = free_chat_models() or ["Qwen/Qwen2-7B-Instruct"]
+            except Exception:
+                pool = ["Qwen/Qwen2-7B-Instruct"]
+            # 最多尝试前2个模型，使用同一HTTPS端点
+            for mdl in pool[:2]:
+                try:
+                    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                    body = {
+                        "model": mdl,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": max_tokens,
+                    }
+                    final_url = ("https://api.siliconflow.cn/v1/chat/completions").strip()
+                    r = requests.post(final_url, headers=headers, json=body, timeout=_timeout)
+                    if r.status_code == 200:
+                        data = r.json()
+                        content = data["choices"][0]["message"]["content"]
+                        _LAST_CALL_MS = int(time.time() * 1000)
+                        _cache_set(cache_key, content)
+                        return content
+                except Exception:
+                    continue
+            raise
+
+    # Explicit single-model mode (compat) using SiliconFlow endpoint
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body = {
         "model": model,
@@ -237,90 +348,34 @@ def call_ai_api(
         "temperature": 0.3,
         "max_tokens": max_tokens,
     }
+    try:
+        final_url = (url or "https://api.siliconflow.cn/v1/chat/completions").strip()
+        from urllib.parse import urlparse as _urlparse
 
-    key_src = json.dumps(
-        {"m": model, "u": user_prompt, "s": system_prompt, "t": max_tokens}, ensure_ascii=False
-    ).encode("utf-8")
-    cache_key = hashlib.sha256(key_src).hexdigest()
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
-
-    global _LAST_CALL_MS
-    for attempt in range(3):
-        try:
-            if _AI_MIN_INTERVAL_MS > 0:
-                now_ms = int(time.time() * 1000)
-                wait = _AI_MIN_INTERVAL_MS - max(0, now_ms - _LAST_CALL_MS)
-                if wait > 0:
-                    time.sleep(wait / 1000.0)
-            # Resolve final URL: explicit argument > env override > base from config
-            base_env = os.getenv("OPENAI_API_BASE")
-            base_cfg = _load_models_and_base_from_config()[2]
-            base = (base_env or base_cfg or "").strip()
-            if not base:
-                raise RuntimeError("缺少 OPENAI_API_BASE（或 config.yml: openai_api_base）")
-            # Enforce HTTPS for base
-            try:
-                from urllib.parse import urlparse
-
-                parsed_base = urlparse(base)
-                if parsed_base.scheme.lower() != "https":
-                    raise RuntimeError(f"安全策略：OPENAI_API_BASE 必须为 https，当前为：{base}")
-            except Exception as _e:
-                raise RuntimeError(str(_e))
-            env_full_url = (os.getenv("OPENAI_API_URL") or "").strip()
-            if url:
-                final_url = url
-            elif env_full_url:
-                final_url = env_full_url
-            else:
-                b = base.rstrip("/")
-                # Be tolerant: if base already points to chat endpoint, do not append again
-                if b.lower().endswith("/chat/completions"):
-                    final_url = b
-                else:
-                    final_url = b + "/chat/completions"
-            # Enforce HTTPS for final URL
-            try:
-                from urllib.parse import urlparse as _urlparse
-
-                _pu = _urlparse(final_url)
-                if _pu.scheme.lower() != "https":
-                    raise RuntimeError(
-                        f"安全策略：OpenAI-Compatible 接口必须为 https，当前为：{final_url}"
-                    )
-            except Exception as _e2:
-                raise RuntimeError(str(_e2))
-            resp = requests.post(final_url, headers=headers, json=body, timeout=120)
-            _LAST_CALL_MS = int(time.time() * 1000)
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                _cache_set(cache_key, content)
-                return content
-            elif resp.status_code in (429, 500, 502, 503, 504):
-                if attempt < 2:
-                    time.sleep(1.2 * (attempt + 1))
-                    continue
-                raise RuntimeError(f"provider error {resp.status_code}")
-            else:
-                # Provide actionable guidance
-                msg = f"api error {resp.status_code} | url={final_url}"
-                if resp.status_code == 401:
-                    msg += " | 请检查 OPENAI_API_KEY 是否正确/有权限"
-                elif resp.status_code == 404:
-                    msg += " | 常见原因：openai_api_base 配置为根URL或完整URL不一致；若 base 已含 /chat/completions 则不要重复拼接；也可能是供应商路径不同"
-                elif resp.status_code == 403:
-                    msg += " | 可能无权访问该模型，请检查模型ID与账号权限"
-                raise RuntimeError(msg)
-        except requests.RequestException as e:
-            if attempt < 2:
-                time.sleep(1.2 * (attempt + 1))
-                continue
-            raise RuntimeError(f"network error: {e}")
-
-    raise RuntimeError("ai call failed")
+        _pu = _urlparse(final_url)
+        if _pu.scheme.lower() != "https":
+            raise RuntimeError(f"安全策略：OpenAI-Compatible 接口必须为 https，当前为：{final_url}")
+        # 外部请求超时：可通过 N2D_CHAT_TIMEOUT 调整（默认20s）
+        _timeout = int(os.getenv("N2D_CHAT_TIMEOUT", "20") or 20)
+        resp = requests.post(final_url, headers=headers, json=body, timeout=_timeout)
+        _LAST_CALL_MS = int(time.time() * 1000)
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            _cache_set(cache_key, content)
+            return content
+        if resp.status_code in (429, 500, 502, 503, 504):
+            raise RuntimeError(f"provider error {resp.status_code}")
+        msg = f"api error {resp.status_code} | url={final_url}"
+        if resp.status_code == 401:
+            msg += " | 请检查 API Key 权限"
+        elif resp.status_code == 404:
+            msg += " | 供应商路径不兼容或模型ID无效"
+        elif resp.status_code == 403:
+            msg += " | 可能无权访问该模型"
+        raise RuntimeError(msg)
+    except requests.RequestException as e:
+        raise RuntimeError(f"network error: {e}")
 
 
 def _split_paras(text: str) -> List[str]:
@@ -361,40 +416,246 @@ def ensure_paragraph_parity(translated: str, source: str) -> str:
     return "%%\n".join(dst)
 
 
+def _clean_title_for_processing(title: str) -> str:
+    t = (title or "").strip()
+    if " | " in t:
+        t = t.split(" | ", 1)[0].strip()
+    t = t.rstrip(".?!銆傦紒锛?")
+    return t
+
+
+def _is_probably_news(title: str, text: str) -> bool:
+    """轻量级启发式判断是否为新闻内容，不抛出异常。"""
+    try:
+        wc = _count_words(text)
+        if wc < 80:
+            return False
+        paras = _split_paras(text)
+        if len(paras) < 2:
+            return False
+        tokens = (text[:2000] or "").lower()
+        hints = [" said", " reports", " according to", "breaking", " news", " report "]
+        score = 0
+        score += sum(1 for h in hints if h in tokens)
+        if (title or "").strip() and len((title or "").strip()) > 10:
+            score += 1
+        return score >= 1
+    except Exception:
+        return True
+
+
+def _chunk_spans(n_items: int, k: int) -> List[Tuple[int, int]]:
+    """Split n_items into k contiguous spans [start, end) as evenly as possible.
+
+    Returns list of (start, end) indices. k is clamped to [1, n_items].
+    """
+    if n_items <= 0:
+        return []
+    k = max(1, min(int(k), n_items))
+    base = n_items // k
+    rem = n_items % k
+    spans: List[Tuple[int, int]] = []
+    start = 0
+    for i in range(k):
+        size = base + (1 if i < rem else 0)
+        end = start + size
+        spans.append((start, end))
+        start = end
+    return spans
+
+
+def _translate_parallel_by_models(text: str, target_lang: str) -> str:
+    """Translate text by splitting paragraphs and assigning chunks to different models in parallel.
+
+    - Paragraphs are split via _split_paras and grouped into K contiguous chunks.
+    - K = min(number of free chat models, number of paragraphs).
+    - Each chunk is translated by a dedicated model (single-model mode) concurrently.
+    - Results are concatenated in original order and paragraph parity is enforced at the end.
+    """
+    paras = _split_paras(text)
+    if not paras:
+        return ""
+    models = free_chat_models()
+    if not models:
+        # Fallback to default pipeline
+        sys_p, usr_p = build_translation_prompts(text, target_lang)
+        return call_ai_api(sys_p, usr_p, model=None)
+
+    spans = _chunk_spans(len(paras), min(len(models), len(paras)))
+    if not spans:
+        sys_p, usr_p = build_translation_prompts(text, target_lang)
+        return call_ai_api(sys_p, usr_p, model=None)
+
+    # Build jobs
+    jobs: List[Tuple[int, str, str]] = []  # (idx, model, chunk_text)
+    for i, (s, e) in enumerate(spans):
+        chunk = "%%\n".join(paras[s:e])
+        mdl = models[i]
+        jobs.append((i, mdl, chunk))
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: Dict[int, str] = {}
+    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+        futs = []
+        for idx, mdl, chunk_text in jobs:
+            sys_p, usr_p = build_translation_prompts(chunk_text, target_lang)
+            futs.append(
+                (idx, ex.submit(call_ai_api, sys_p, usr_p, mdl, None, None, estimate_max_tokens(1)))
+            )
+        for idx, fut in futs:
+            try:
+                out = fut.result()
+                results[idx] = out
+            except Exception:
+                # On failure of a chunk, fallback to auto model for that chunk
+                try:
+                    sys_p, usr_p = build_translation_prompts(jobs[idx][2], target_lang)
+                    results[idx] = call_ai_api(sys_p, usr_p, model=None)
+                except Exception:
+                    results[idx] = ""
+
+    ordered = [results[i] for i in range(len(jobs))]
+    combined = "\n\n".join(ordered).strip()
+    # Enforce final parity against original English text
+    return ensure_paragraph_parity(combined, text)
+
+
 def _count_words(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text or ""))
 
 
 def _adjust_word_count(
-    text: str, min_w: int = TARGET_WORD_MIN, max_w: int = TARGET_WORD_MAX, max_attempts: int = 3
+    text: str, min_w: int = TARGET_WORD_MIN, max_attempts: int = 2
 ) -> Tuple[str, int]:
+    # 仅确保达到最小字数，不再收缩到上限
+    try:
+        cfg_min, _cfg_max = _load_word_bounds()
+        min_w = cfg_min
+    except Exception:
+        pass
     wc = _count_words(text)
-    if min_w <= wc <= max_w:
+    if wc >= min_w:
         cfg = _load_cleaning_config()
         cleaned, _rm, _k = _sanitize_meta(text, cfg.get("prefixes", []), cfg.get("patterns", []))
         return (cleaned or text), _count_words(cleaned or text)
     for attempt in range(max_attempts):
-        target = f"{min_w}-{max_w}"
         instruction = (
-            f"Adjust the word count to {target}. Keep style and meaning. "
-            f"Output ONLY clean English body text; DO NOT include notes, timestamps, media names, sources, authors, copyright, images, ads, disclaimers, or titles. "
-            f"Split paragraphs clearly; use %% to separate if needed."
+            f"Ensure the output has at least {min_w} words without adding metadata. "
+            f"Keep meaning and style; output clean English body only. "
+            f"Split paragraphs clearly; use % to separate if needed."
         )
         sys_p = "You are a professional news editor. Output strictly the clean body only."
         usr_p = instruction + "\n\n" + text
-        adjusted = call_ai_api(
-            sys_p, usr_p, model=_get_general_model_from_config(), max_tokens=estimate_max_tokens(1)
-        )
+        adjusted = call_ai_api(sys_p, usr_p, model=None, max_tokens=estimate_max_tokens(1))
         cfg = _load_cleaning_config()
         adjusted_clean, _rm, _k = _sanitize_meta(
             adjusted, cfg.get("prefixes", []), cfg.get("patterns", [])
         )
         adjusted = adjusted_clean or adjusted
         wc = _count_words(adjusted)
-        if min_w <= wc <= max_w:
+        if wc >= min_w:
             return adjusted, wc
         text = adjusted
     return text, wc
+
+
+def _parse_model_list(env_var: str) -> List[str]:
+    s = os.getenv(env_var, "")
+    if not s:
+        return []
+    return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def _first_passing_result(
+    system_prompt: str,
+    user_prompt: str,
+    models: List[str],
+    validator,
+    *,
+    max_tokens: int,
+    timeout: int = 60,
+) -> Tuple[str, Optional[str]]:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not models:
+        out = call_ai_api(system_prompt, user_prompt, model=None, max_tokens=max_tokens)
+        return out, None
+    best: Optional[Tuple[str, str]] = None
+    with ThreadPoolExecutor(max_workers=len(models)) as ex:
+        futs = {
+            ex.submit(
+                call_ai_api,
+                system_prompt,
+                user_prompt,
+                m,
+                None,
+                None,
+                max_tokens,
+            ): m
+            for m in models
+        }
+        for f in as_completed(futs):
+            m = futs[f]
+            try:
+                content = f.result()
+                if content and validator(content):
+                    return content, m
+                if content and best is None:
+                    best = (m, content)
+            except Exception:
+                continue
+    return (best[1] if best else ""), (best[0] if best else None)
+
+
+def _adjust_word_count_roles(text: str) -> Tuple[str, int]:
+    min_w, _max_w = TARGET_WORD_MIN, TARGET_WORD_MAX
+    instruction = (
+        f"Ensure the output has at least {min_w} words without adding metadata. "
+        f"Keep meaning and style; output clean English body only. "
+        f"Split paragraphs clearly; use % to separate if needed."
+    )
+    sys_p = "You are a professional news editor. Output strictly the clean body only."
+    usr_p = instruction + "\n\n" + (text or "")
+
+    def _valid_editor(o: str) -> bool:
+        wc = _count_words(o)
+        return wc >= min_w
+
+    models = _parse_model_list("N2D_EDITOR_MODELS") or free_chat_models()
+    out, _winner = _first_passing_result(
+        sys_p,
+        usr_p,
+        models,
+        _valid_editor,
+        max_tokens=estimate_max_tokens(1),
+    )
+    cfg = _load_cleaning_config()
+    cleaned, _rm, _k = _sanitize_meta(out or text, cfg.get("prefixes", []), cfg.get("patterns", []))
+    adjusted = cleaned or (out or text)
+    return adjusted, _count_words(adjusted)
+
+
+def _translate_with_roles(text: str, target_lang: str) -> str:
+    models = _parse_model_list("N2D_TRANSLATOR_MODELS") or free_chat_models()
+    sys_p, usr_p = build_translation_prompts(text, target_lang)
+    src_paras = _split_paras(text)
+
+    def _valid_trans(o: str) -> bool:
+        return bool(o and _count_words(o) > 0)
+
+    out, _winner = _first_passing_result(
+        sys_p,
+        usr_p,
+        models,
+        _valid_trans,
+        max_tokens=estimate_max_tokens(1),
+    )
+    out = out or ""
+    out = ensure_paragraph_parity(out, text)
+    if len(_split_paras(out)) != len(src_paras):
+        out = ensure_paragraph_parity(out, text)
+    return out
 
 
 def _merge_short_paragraphs_text(text: str, max_chars: int = 80) -> str:
@@ -423,6 +684,32 @@ def _merge_short_paragraphs_text(text: str, max_chars: int = 80) -> str:
     return "%%\n".join(paras)
 
 
+def _merge_short_paragraphs_words(text: str, max_words: int = 80) -> str:
+    paras = _split_paras(text)
+    if not paras:
+        return text
+    i = 0
+    while i < len(paras):
+        wcount = _count_words(paras[i])
+        if wcount < max_words:
+            prev_w = _count_words(paras[i - 1]) if i > 0 else 10**9
+            next_w = _count_words(paras[i + 1]) if i + 1 < len(paras) else 10**9
+            if prev_w == 10**9 and next_w == 10**9:
+                break
+            if next_w <= prev_w and (i + 1) < len(paras):
+                paras[i] = (paras[i] + " " + paras[i + 1]).strip()
+                del paras[i + 1]
+            elif i > 0:
+                paras[i - 1] = (paras[i - 1] + " " + paras[i]).strip()
+                del paras[i]
+                i = max(i - 1, 0)
+            else:
+                i += 1
+        else:
+            i += 1
+    return "%%\n".join(paras)
+
+
 def _translate_title(title: str, target_lang: str) -> str:
     if not title:
         return ""
@@ -432,7 +719,7 @@ def _translate_title(title: str, target_lang: str) -> str:
     user_prompt = f"Translate to {target_lang}:\n\n{title}"
     try:
         return call_ai_api(
-            system_prompt, user_prompt, model=_get_translation_model_from_config(), max_tokens=estimate_max_tokens(1)
+            system_prompt, user_prompt, model=None, max_tokens=estimate_max_tokens(1)
         )
     except Exception:
         return title
@@ -443,44 +730,144 @@ def process_article(
 ) -> Dict[str, Any]:
     start = time.time()
     log_processing_step("engine", "article", f"processing article {article.index}")
-    # Mark explicit stage: preprocess begins
-    log_processing_step("engine", "stage", "preprocess start")
+    pipeline_mode = os.getenv("N2D_PIPELINE_MODE", "paid").strip().lower()
+    # Stage 0: word-bound filter for free pipeline OR news check + clean for paid
+    if pipeline_mode == "free":
+        try:
+            bmin, _bmax = _load_word_bounds()
+        except Exception:
+            bmin, _bmax = TARGET_WORD_MIN, TARGET_WORD_MAX
+        wc0 = _count_words(article.content)
+        if wc0 < bmin:
+            # Early reject without AI editing
+            res = {
+                "id": str(article.index),
+                "original_title": article.title,
+                "translated_title": "",
+                "original_content": article.content,
+                "adjusted_content": article.content,
+                "adjusted_word_count": wc0,
+                "translated_content": "",
+                "target_language": target_lang,
+                "processing_timestamp": now_stamp(),
+                "url": article.url,
+                "success": False,
+                "is_news": False,
+                "error": "字数低于下限（免费通道）",
+            }
+            log_processing_result(
+                "engine", "article", "skipped", article.to_dict(), res, "wc-filter"
+            )
+            return res
 
-    # Step 1: word adjust
-    adjusted_raw, final_wc = _adjust_word_count(article.content)
+    # Stage 0b/1: news check + initial cleaning
+    log_processing_step("engine", "stage", "news check + clean")
     cfg_clean = _load_cleaning_config()
+    clean_title = _clean_title_for_processing(article.title)
+    base_clean, rm0, kinds0 = _sanitize_meta(
+        article.content, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
+    )
+    if not base_clean:
+        base_clean = article.content
+    is_news = _is_probably_news(clean_title, base_clean)
+    if (
+        os.getenv("N2D_ENFORCE_NEWS", "").strip().lower() in ("1", "true", "yes", "on")
+        and not is_news
+    ):
+        res = {
+            "id": str(article.index),
+            "original_title": clean_title or article.title,
+            "translated_title": "",
+            "original_content": article.content,
+            "adjusted_content": base_clean,
+            "adjusted_word_count": _count_words(base_clean),
+            "translated_content": "",
+            "target_language": target_lang,
+            "processing_timestamp": now_stamp(),
+            "url": article.url,
+            "success": False,
+            "is_news": False,
+            "error": "非新闻内容（启用严格检查）",
+        }
+        log_processing_result("engine", "article", "skipped", article.to_dict(), res, "non-news")
+        return res
+
+    roles_mode = os.getenv("N2D_AI_ROLES", "").strip().lower() in ("1", "true", "yes", "roles")
+
+    # Stage 1a: 预合并短段，降低后续AI调用Token（不改变语义）
+    try:
+        merge_short_chars_eff = int(merge_short_chars or 80)
+    except Exception:
+        merge_short_chars_eff = 80
+    base_clean = _merge_short_paragraphs_words(base_clean, max_words=merge_short_chars_eff)
+    if pipeline_mode == "free":
+        # No AI editing for word count; use cleaned text as adjusted_raw
+        adjusted_raw, final_wc = base_clean, _count_words(base_clean)
+    else:
+        # Stage 1: word adjust on cleaned content (paid channel)
+        if roles_mode:
+            adjusted_raw, final_wc = _adjust_word_count_roles(base_clean)
+        else:
+            adjusted_raw, final_wc = _adjust_word_count(base_clean)
+
+    # Stage 2: sanitize again after AI editing
     adjusted, rm1, kinds1 = _sanitize_meta(
         adjusted_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
     )
     if not adjusted:
         adjusted = adjusted_raw
-    # Merge short English paragraphs to reduce excessive breaks
-    adjusted = _merge_short_paragraphs_text(adjusted, max_chars=int(merge_short_chars or 80))
-    # Step 2: translation (initial pass)
+
+    # Stage 3: merge short paragraphs by words (default 80 words)
+    adjusted = _merge_short_paragraphs_words(adjusted, max_words=int(merge_short_chars or 80))
+
+    # Enforce minimal word bound once more after cleaning/merging
+    try:
+        bmin, _bmax = _load_word_bounds()
+    except Exception:
+        bmin, _bmax = TARGET_WORD_MIN, TARGET_WORD_MAX
+    cur_wc = _count_words(adjusted)
+    if cur_wc < bmin:
+        if os.getenv("N2D_AI_ROLES", "").strip().lower() in ("1", "true", "yes", "roles"):
+            adjusted2, _wc2 = _adjust_word_count_roles(adjusted)
+        else:
+            adjusted2, _wc2 = _adjust_word_count(adjusted, bmin)
+        adjusted_clean2, _rmx, _kx = _sanitize_meta(
+            adjusted2, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
+        )
+        adjusted = adjusted_clean2 or adjusted2
+    # Stage 4: translation (initial pass)
     # Mark explicit stage: translation begins
     log_processing_step("engine", "stage", "translate start")
-    sys_p, usr_p = build_translation_prompts(adjusted, target_lang)
-    translated_raw = call_ai_api(
-        sys_p, usr_p, model=_get_translation_model_from_config()
-    )
+    # 默认启用并行翻译（可通过环境变量覆盖）
+    _mode = os.getenv("N2D_TRANSLATION_MODE", "parallel").strip().lower()
+    if roles_mode:
+        translated_raw = _translate_with_roles(adjusted, target_lang)
+    elif _mode == "parallel":
+        translated_raw = _translate_parallel_by_models(adjusted, target_lang)
+    else:
+        sys_p, usr_p = build_translation_prompts(adjusted, target_lang)
+        translated_raw = call_ai_api(sys_p, usr_p, model=None)
     translated_raw = ensure_paragraph_parity(translated_raw, adjusted)
     translated, rm2, kinds2 = _sanitize_meta(
         translated_raw, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
     )
     if not translated:
         translated = translated_raw
-    # Title translation
-    translated_title = _translate_title(article.title, target_lang)
+    # Title translation on cleaned title
+    translated_title = _translate_title(clean_title or article.title, target_lang)
 
     # Fallback: if cleaned English falls below min threshold, revert English to adjusted_raw
     # and regenerate translation to keep bilingual parity.
     if _count_words(adjusted) < int(cfg_clean.get("min_words", 200)):
         adjusted = adjusted_raw
         # Regenerate translation against the reverted English text
-        sys_p2, usr_p2 = build_translation_prompts(adjusted, target_lang)
-        translated_raw2 = call_ai_api(
-            sys_p2, usr_p2, model=_get_translation_model_from_config()
-        )
+        if roles_mode:
+            translated_raw2 = _translate_with_roles(adjusted, target_lang)
+        elif _mode == "parallel":
+            translated_raw2 = _translate_parallel_by_models(adjusted, target_lang)
+        else:
+            sys_p2, usr_p2 = build_translation_prompts(adjusted, target_lang)
+            translated_raw2 = call_ai_api(sys_p2, usr_p2, model=None)
         translated_raw2 = ensure_paragraph_parity(translated_raw2, adjusted)
         translated2, rm2b, kinds2b = _sanitize_meta(
             translated_raw2, cfg_clean.get("prefixes", []), cfg_clean.get("patterns", [])
@@ -493,7 +880,7 @@ def process_article(
 
     res = {
         "id": str(article.index),
-        "original_title": article.title,
+        "original_title": clean_title or article.title,
         "translated_title": translated_title,
         "original_content": article.content,
         "adjusted_content": adjusted,
@@ -504,9 +891,10 @@ def process_article(
         "processing_timestamp": now_stamp(),
         "url": article.url,
         "success": True,
+        "is_news": bool(is_news),
         "clean_removed_en": int(rm1),
         "clean_removed_zh": int(rm2),
-        "clean_removed_kinds": list(set(kinds1 + kinds2)),
+        "clean_removed_kinds": list(set((kinds0 or []) + kinds1 + kinds2)),
     }
     log_processing_result(
         "engine",
@@ -525,9 +913,49 @@ def process_articles_two_steps_concurrent(
 ) -> Dict[str, Any]:
     t0 = time.time()
     log_task_start("engine", "batch", {"count": len(articles), "target_lang": target_lang})
+    pipeline_mode = os.getenv("N2D_PIPELINE_MODE", "paid").strip().lower()
+    # Prefetch models via scraper for this run and inject as per-run override
+    try:
+        # 仅在本批任务开始时抓取定价页一次，并注入全局覆盖
+        if pipeline_mode == "paid":
+            from news2docx.ai.free_models_scraper import scrape_affordable_models
+
+            max_price = float(os.getenv("N2D_MAX_PRICE", "1") or 1)
+            models = scrape_affordable_models(max_price=max_price, timeout_ms=10000)
+        else:
+            from news2docx.ai.free_models_scraper import scrape_free_models
+
+            models = scrape_free_models(timeout_ms=10000)
+        if models:
+            set_runtime_models_override(models)
+            log_processing_step(
+                "engine", "models", f"prefetched {len(models)} models via scraper (once)"
+            )
+            # Rate limits: per model 1000 req/min; 20k-50k tokens/min per model
+            # Compute conservative min-interval and concurrency cap
+            per_model_rpm = int(os.getenv("N2D_PER_MODEL_RPM", "1000") or 1000)
+            per_model_tpm = int(os.getenv("N2D_PER_MODEL_TPM", "20000") or 20000)
+            est_tok_per_req = int(os.getenv("N2D_EST_TOKENS_PER_REQ", "1500") or 1500)
+            m = max(1, len(models))
+            # Minimal global interval so aggregated rate <= m*per_model_rpm
+            min_interval_ms = max(1, int(60000 / max(1, m * per_model_rpm)))
+            global _AI_MIN_INTERVAL_MS  # type: ignore
+            _AI_MIN_INTERVAL_MS = min_interval_ms
+            # Concurrency cap by tokens
+            max_concurrency_by_tokens = max(1, int((m * per_model_tpm) / max(1, est_tok_per_req)))
+        else:
+            max_concurrency_by_tokens = DEFAULT_CONCURRENCY
+    except Exception:
+        # On any failure, clear override to allow default selector to choose
+        try:
+            set_runtime_models_override(None)
+        except Exception:
+            pass
+        max_concurrency_by_tokens = DEFAULT_CONCURRENCY
     out: List[Dict[str, Any]] = []
     errors = 0
-    with ThreadPoolExecutor(max_workers=max(1, DEFAULT_CONCURRENCY)) as ex:
+    dyn_workers = max(1, min(DEFAULT_CONCURRENCY, max_concurrency_by_tokens))
+    with ThreadPoolExecutor(max_workers=dyn_workers) as ex:
         fut_to_article = {
             ex.submit(process_article, a, target_lang, merge_short_chars): a for a in articles
         }
@@ -562,4 +990,9 @@ def process_articles_two_steps_concurrent(
                 )
     payload = {"articles": out, "metadata": {"processed": len(out), "failed": errors}}
     log_task_end("engine", "batch", errors == 0, {"elapsed": time.time() - t0})
+    # Clear per-run override
+    try:
+        set_runtime_models_override(None)
+    except Exception:
+        pass
     return payload

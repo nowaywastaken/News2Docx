@@ -37,7 +37,7 @@ class FontConfig:
 class DocumentConfig:
     # First-line indent in inches (default 0.2 inch)
     first_line_indent_inch: float = 0.2
-    font_zh: FontConfig = field(default_factory=lambda: FontConfig(name="SimSun", size_pt=10.5))
+    font_zh: FontConfig = field(default_factory=lambda: FontConfig(name="宋体", size_pt=10.5))
     font_en: FontConfig = field(default_factory=lambda: FontConfig(name="Cambria", size_pt=10.5))
     title_size_multiplier: float = 1.0
     bilingual: bool = True
@@ -133,7 +133,7 @@ class DocumentWriter:
                 self.cfg.font_zh.size_pt * float(self.cfg.title_size_multiplier or 1.0)
             )
             try:
-                r._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+                r._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
             except Exception:
                 pass
         else:

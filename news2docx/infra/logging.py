@@ -11,7 +11,9 @@ This module provides a centralized, Log4j-like logging system for Python:
 Configuration via environment variables (prefix: N2D_):
 - ``N2D_LOG_LEVEL``: TRACE, DEBUG, INFO, WARN, ERROR, FATAL (default: INFO)
 - ``N2D_LOG_JSON``: 1 to enable JSON layout (default: 0)
-- Note: local file appenders are disabled by design for security; only console output is enabled.
+- Note: console output is always enabled. A file appender to `log.txt` is typically
+  attached by the application entry (see `index.py:prepare_logging`) which clears
+  the file on startup and writes logs during runtime.
 
 The helpers below keep backward compatibility for existing call sites
 like ``unified_print`` and ``log_task_*``.

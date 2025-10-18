@@ -2,12 +2,6 @@
 urllib3==2.2.3
 beautifulsoup4==4.12.3
 python-docx==0.8.11
-typer==0.12.3
 pyyaml==6.0.2
 tenacity==8.2.3
-PyQt6==6.7.0
-cryptography==42.0.8
-ruff==0.13.3
-black==24.8.0
-pytest==8.3.2
-pyinstaller==6.10.0
+rich==13.7.1

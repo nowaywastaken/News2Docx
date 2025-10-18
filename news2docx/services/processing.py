@@ -54,15 +54,9 @@ def articles_from_scraped(objs: List[object]) -> List[ProcArticle]:
 
 
 def process_articles(articles: List[ProcArticle], conf: Dict[str, Any]) -> Dict[str, Any]:
-    """Run the two-step processing with config-derived options."""
-    target_lang = (
-        (conf.get("target_language") or "Chinese") if isinstance(conf, dict) else "Chinese"
-    )
-    merge_short = conf.get("merge_short_paragraph_chars") if isinstance(conf, dict) else None
-    try:
-        merge_short_i: Optional[int] = int(merge_short) if merge_short is not None else None
-    except Exception:
-        merge_short_i = None
+    """Run the two-step processing with code-defined defaults (no UI overrides)."""
+    target_lang = "Chinese"
+    merge_short_i: Optional[int] = 80
     return process_articles_two_steps_concurrent(
         articles, target_lang=target_lang, merge_short_chars=merge_short_i
     )

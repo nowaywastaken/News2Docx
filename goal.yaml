@@ -1,0 +1,207 @@
+RPG:
+  types:
+    - name: URL
+      fields: [value]
+    
+    - name: HTTPSURL
+      fields: [value]
+      rules: ["必须以 https:// 开头"]
+
+    - name: ConfigFile
+      fields: [path]
+
+    - name: AppConfig
+      fields: [openai_api_key, processing_word_min, processing_forbidden_prefixes, processing_forbidden_patterns, export_font_zh_name, export_font_zh_size, export_font_en_name, export_font_en_size, export_title_bold]
+
+    - name: ScrapedArticle
+      fields: [id, url, title, content, content_length, word_count, scraped_at]
+
+    - name: ScrapedBundle
+      item_of: ScrapedArticle
+
+    - name: ProcessedArticle
+      fields: [id, original_title, translated_title, adjusted_content, translated_content, url, target_language, adjusted_word_count]
+
+    - name: ProcessedResult
+      fields: [articles, metadata]
+
+    - name: DocxReport
+      variants: [Single, SplitPerArticle]
+
+    - name: DocxFile
+      fields: [path]
+
+    - name: LogEvent
+      fields: [level, message, ts, extra]
+
+    - name: APIKey
+      fields: [value]
+
+    - name: ModelList
+      item_of: string
+
+    - name: RunEvent
+      fields: [action, ts]
+
+    - name: RunPath
+      fields: [root, cache_dir, output_dir]
+
+    - name: UserAction
+      fields: [command, args]
+
+    - name: RunOutcome
+      fields: [ok, summary, run_path]
+
+    - name: ExportMode
+      variants: [DOCX, SplitPerArticle]
+
+  modules:
+    - name: Logger
+      kind: infra
+      inputs: [LogEvent]
+      outputs: []
+      description: 统一日志（终端 + log.txt），支持 JSON 布局
+
+    - name: ConfigManager
+      kind: infra
+      inputs: [ConfigFile]
+      outputs: [AppConfig]
+      depends_on: [Logger]
+      description: 读取并校验 config.yml（缺失时由 TUI/程序创建最小模板，不再依赖示例文件）
+
+    - name: Scraper
+      kind: module
+      inputs: [AppConfig]
+      outputs: [ScrapedBundle]
+      depends_on: [Logger, RunsManager]
+      description: 通过 GDELT 与站点选择器抓取网页，仅 HTTPS
+
+    - name: Processor
+      kind: module
+      inputs: [ScrapedBundle, AppConfig]
+      outputs: [ProcessedResult]
+      depends_on: [AIProvider, Logger]
+      algorithm: "两阶段：英文清洗与字数调整 -> 中译并保持段落对齐"
+
+    - name: Exporter
+      kind: module
+      inputs: [ProcessedResult, ExportMode, RunPath]
+      outputs: [DocxReport]
+      depends_on: [DocxWriter, Logger, RunsManager]
+      description: 按中文标题命名，生成 DOCX（支持单文件或按篇拆分）
+
+    - name: AIProvider
+      kind: infra
+      inputs: [APIKey]
+      outputs: [ModelList]
+      description: SiliconFlow OpenAI 兼容接口（/v1），仅 HTTPS
+
+    - name: ModelScraper
+      kind: infra
+      inputs: [URL]
+      outputs: [ModelList]
+      description: 抓取 siliconflow.cn/pricing 免费模型，作为 AIProvider 失败时的可选回退
+
+    - name: DocxWriter
+      kind: infra
+      inputs: [ProcessedResult, ExportMode, RunPath]
+      outputs: [DocxFile]
+      description: 基于 python-docx 的文档写入器
+
+    - name: RunsManager
+      kind: infra
+      inputs: [RunEvent]
+      outputs: [RunPath]
+      description: 管理 runs 目录与缓存，保证可追溯
+
+    - name: TUIHandler
+      kind: service
+      inputs: [UserAction]
+      outputs: [RunOutcome]
+      depends_on: [ConfigManager, Scraper, Processor, Exporter, RunsManager, Logger]
+      description: Rich 终端界面，一键（抓取→处理→导出），含体检与配置编辑
+
+  data_flow:
+    - from: TUIHandler     to: ConfigManager   artifact: ConfigFile
+    - from: ConfigManager  to: TUIHandler     artifact: AppConfig
+    - from: TUIHandler     to: Scraper        artifact: AppConfig
+    - from: Scraper        to: Processor      artifact: ScrapedBundle
+    - from: ModelScraper   to: AIProvider     artifact: ModelList
+    - from: Processor      to: Exporter       artifact: ProcessedResult
+    - from: TUIHandler     to: RunsManager    artifact: RunEvent
+    - from: RunsManager    to: TUIHandler     artifact: RunPath
+    - from: TUIHandler     to: Exporter       artifact: ExportMode
+    - from: RunsManager    to: Exporter       artifact: RunPath
+    - from: Exporter       to: TUIHandler     artifact: DocxReport
+
+  constraints:
+    - "无循环依赖"
+    - "仅允许 HTTPS 外部访问（抓取与 AI API）"
+    - "模块对外只暴露声明的 outputs"
+    - "接口类型必须匹配（如 Exporter 只吃 ProcessedResult）"
+    - "程序启动清空旧日志，日志同时写入 log.txt 与终端"
+    - "禁止在日志中泄露敏感信息（如 openai_api_key）"
+    - "Scraper 必须校验 robots.txt；若站点拒绝抓取则跳过"
+    - "外部请求统一超时 10s；重试 2 次，指数退避；并发最大=AppConfig 并发阈值"
+    - "Processor 的中英段落一一对应，禁止丢段/并段"
+    - "导出文件名使用中文标题的安全化转写（去非法字符），重复名带序号"
+    - "字体设置必须可用，不可用则按配置提供的 fallback 字体"
+
+  tests:
+    - name: "HTTP 自动升级为 HTTPS"
+      given:  URL("http://example.com")
+      expect: Scraper -> URL("https://example.com")
+
+    - name: "缺少 API Key 被拦截"
+      given:  AppConfig(openai_api_key=None)
+      expect: Processor -> error("missing API key")
+
+    - name: "导出按篇拆分"
+      given:  ProcessedResult(articles=2), ExportMode(SplitPerArticle)
+      expect: Exporter -> DocxReport.SplitPerArticle
+
+    - name: "黑名单前缀/正则拦截"
+      given:  AppConfig(processing_forbidden_prefixes=["AD:"], processing_forbidden_patterns=["^Disclaimer"])
+      expect: Processor -> adjusted_content 不包含被禁内容
+
+    - name: "段落对齐一致性"
+      given:  ScrapedArticle(content 有 12 段)
+      expect: ProcessedArticle(translated_content 仍为 12 段)
+
+    - name: "命名与落盘路径"
+      given:  ProcessedResult(articles=2, titles=["中国 A/新闻", "中国 A/新闻"])
+      expect: Exporter -> 生成 "中国 A 新闻.docx" 与 "中国 A 新闻 (2).docx"
+
+    - name: "字体不可用时回退成功"
+      given:  AppConfig(export_font_zh_name="不存在的字体", fallback="Source Han Sans")
+      expect: Exporter -> 使用 fallback 字体完成
+
+    - name: "缓存命中"
+      given:  相同 URL 重复抓取
+      expect: RunsManager -> 返回缓存结果，Scraper 实际网络请求计数不增加
+
+  non_functional:
+    - "TUI 启动体检 < 2s"
+    - "抓取并发默认 4；10 篇端到端 < 2 分钟"
+    - "日志规范：INFO 级别默认，支持 JSON 格式输出（N2D_LOG_JSON=1）"
+
+implementation:
+  files:
+    - path: app.py
+      exports: [main]
+    - path: tui.py
+      exports: [run_tui]
+    - path: config.py
+      exports: [load_config, validate_config]
+    - path: scrape.py
+      exports: [fetch_bundle]   # inputs: AppConfig -> ScrapedBundle
+    - path: process.py
+      exports: [process_bundle] # inputs: ScrapedBundle, AppConfig -> ProcessedResult
+    - path: export.py
+      exports: [export_docx]    # inputs: ProcessedResult, ExportMode, RunPath -> DocxReport
+    - path: ai_provider.py
+      exports: [list_models, translate_text]
+    - path: runs.py
+      exports: [open_run, get_paths] # RunEvent -> RunPath
+    - path: logging_setup.py
+      exports: [setup_logger]

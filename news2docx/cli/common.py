@@ -5,23 +5,18 @@ from pathlib import Path
 
 
 def ensure_openai_env(conf: dict) -> None:
-    """Propagate OpenAI-Compatible settings from config into env.
+    """Propagate API key settings from config into env.
 
-    - Sets OPENAI_API_KEY
-    - Sets OPENAI_API_BASE if provided in config
+    - Prefer `SILICONFLOW_API_KEY`, fallback to `OPENAI_API_KEY`.
+    - API base is hard-coded to SiliconFlow; no base injection here.
     """
     if not isinstance(conf, dict):
         return
 
     # Unified keys
     key = conf.get("openai_api_key")
-    base = conf.get("openai_api_base")
-
-    if key and not os.getenv("OPENAI_API_KEY"):
+    if key and not (os.getenv("SILICONFLOW_API_KEY") or os.getenv("OPENAI_API_KEY")):
         os.environ["OPENAI_API_KEY"] = str(key)
-
-    if base and not os.getenv("OPENAI_API_BASE"):
-        os.environ["OPENAI_API_BASE"] = str(base)
 
 
 def desktop_outdir() -> Path:

@@ -18,19 +18,63 @@ from news2docx.core.utils import now_stamp
 from news2docx.infra.logging import log_task_end, log_task_start, unified_print
 from news2docx.scrape.selectors import load_selector_overrides, merge_selectors
 
-DEFAULT_CRAWLER_API_URL = "https://gdelt-xupojkickl.cn-hongkong.fcapp.run"
 GDELT_BASE = "https://api.gdeltproject.org/api/v2/doc/doc"
+
+# Hardcoded crawler parameters (ignore config values)
+# These constants define the crawler behavior regardless of external config.
+_HARDCODED_MAX_URLS = 10
+_HARDCODED_CONCURRENCY = 4
+_HARDCODED_TIMEOUT = 10
+_HARDCODED_PICK_MODE = "random"  # random | top
+_HARDCODED_RANDOM_SEED: Optional[int] = None
+_HARDCODED_DB_PATH = os.path.join(os.getcwd(), ".n2d_cache", "crawled.sqlite3")
+# Additional noise patterns can be extended here; config.noise_patterns is ignored
+_HARDCODED_NOISE_PATTERNS: List[str] = []
+
+# Embedded domains (replace former sites file). Edit this list to curate sources.
+_EMBEDDED_SITES: List[str] = [
+    "time.com",
+    "bloomberg.com",
+    "nytimes.com",
+    "ft.com",
+    "theatlantic.com",
+    "csmonitor.com",
+    "theguardian.com",
+]
+
+# HTTP headers for GDELT calls
+_HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; News2Docx/2.0)",
+    "Accept": "application/json,text/plain,*/*",
+}
+
+
+def _enforce_https_url(u: Optional[str]) -> Optional[str]:
+    """Return an HTTPS URL or None if not enforceable.
+
+    - If url scheme is https: return as-is
+    - If scheme is http: attempt to upgrade to https by replacing scheme
+    - If scheme is missing: return None
+    - Any other scheme: return None
+    """
+    if not u:
+        return None
+    try:
+        pu = urlparse(u)
+        if not pu.scheme:
+            return None
+        if pu.scheme.lower() == "https":
+            return u
+        if pu.scheme.lower() == "http":
+            return "https://" + u.split("://", 1)[1]
+        return None
+    except Exception:
+        return None
 
 
 @dataclass
 class ScrapeConfig:
-    api_url: str = os.getenv("CRAWLER_API_URL", DEFAULT_CRAWLER_API_URL)
-    api_token: Optional[str] = field(default_factory=lambda: os.getenv("CRAWLER_API_TOKEN"))
-    mode: str = field(default_factory=lambda: os.getenv("CRAWLER_MODE", "remote"))  # remote | local
-    sites_file: Optional[str] = field(
-        default_factory=lambda: os.getenv("CRAWLER_SITES_FILE")
-        or os.path.join(os.getcwd(), "server", "news_website.txt")
-    )
+    # sites_file removed in favor of embedded list
     gdelt_timespan: str = field(default_factory=lambda: os.getenv("GDELT_TIMESPAN", "7d"))
     gdelt_max_per_call: int = field(
         default_factory=lambda: (
@@ -38,6 +82,7 @@ class ScrapeConfig:
         )
     )
     gdelt_sort: str = field(default_factory=lambda: os.getenv("GDELT_SORT", "datedesc"))
+    # The fields below are kept for backward compatibility but ignored at runtime.
     timeout: int = 30
     concurrency: int = 4
     max_urls: int = 1
@@ -52,7 +97,9 @@ class ScrapeConfig:
             "N2D_DB_PATH", os.path.join(os.getcwd(), ".n2d_cache", "crawled.sqlite3")
         )
     )
-    noise_patterns: Optional[List[str]] = None  # extra noise patterns from config
+    noise_patterns: Optional[List[str]] = None  # ignored; use hardcoded list
+    # 处理阶段英文字数下限（抓取阶段预筛选），放弃上限
+    required_word_min: Optional[int] = None
 
 
 @dataclass
@@ -86,8 +133,12 @@ def _http_post(
 
 
 def _http_get_text(url: str, headers: Dict[str, str], timeout: int) -> Optional[str]:
+    # Enforce HTTPS for all outbound requests
+    url_https = _enforce_https_url(url)
+    if not url_https:
+        return None
     try:
-        r = requests.get(url, headers=headers, timeout=timeout)
+        r = requests.get(url_https, headers=headers, timeout=timeout)
         r.raise_for_status()
         r.encoding = r.apparent_encoding or r.encoding or "utf-8"
         return r.text
@@ -182,9 +233,9 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
                 ps = str(p).strip()
                 if not ps:
                     continue
-                if (ps.startswith("/") and ps.endswith("/") and len(ps) >= 2) or ps.lower().startswith(
-                    "re:"
-                ):
+                if (
+                    ps.startswith("/") and ps.endswith("/") and len(ps) >= 2
+                ) or ps.lower().startswith("re:"):
                     body = ps[1:-1] if (ps.startswith("/") and ps.endswith("/")) else ps[3:]
                     try:
                         regexes.append(re.compile(body, flags=re.IGNORECASE))
@@ -233,7 +284,9 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
             ps = str(p).strip()
             if not ps:
                 continue
-            if (ps.startswith("/") and ps.endswith("/") and len(ps) >= 2) or ps.lower().startswith("re:"):
+            if (ps.startswith("/") and ps.endswith("/") and len(ps) >= 2) or ps.lower().startswith(
+                "re:"
+            ):
                 body = ps[1:-1] if (ps.startswith("/") and ps.endswith("/")) else ps[3:]
                 try:
                     regexes.append(re.compile(body, flags=re.IGNORECASE))
@@ -265,27 +318,26 @@ def _extract(html: str, url: str, noise_patterns: Optional[List[str]] = None) ->
 
 class NewsScraper:
     def __init__(self, cfg: ScrapeConfig) -> None:
-        mode = (cfg.mode or "remote").lower()
-        if mode == "remote" and not cfg.api_token:
-            raise ValueError("CRAWLER_API_TOKEN is required in remote mode")
-        # Enforce HTTPS for remote crawler endpoint
-        if mode == "remote":
-            try:
-                from urllib.parse import urlparse
-
-                pu = urlparse(str(cfg.api_url or ""))
-                if pu.scheme.lower() != "https":
-                    raise ValueError(
-                        f"安全策略：crawler_api_url 必须为 https，当前为：{cfg.api_url}"
-                    )
-            except Exception:
-                raise
+        # Copy and then override with hardcoded parameters to fully ignore external config
         self.cfg = cfg
+        self.cfg.max_urls = _HARDCODED_MAX_URLS
+        self.cfg.concurrency = _HARDCODED_CONCURRENCY
+        self.cfg.timeout = _HARDCODED_TIMEOUT
+        self.cfg.pick_mode = _HARDCODED_PICK_MODE
+        self.cfg.random_seed = _HARDCODED_RANDOM_SEED
+        self.cfg.db_path = _HARDCODED_DB_PATH
+        self.cfg.noise_patterns = list(_HARDCODED_NOISE_PATTERNS)
         # Ensure DB directory exists
         try:
             os.makedirs(os.path.dirname(self.cfg.db_path), exist_ok=True)
         except Exception:
             pass
+        # 读取字数门槛（若无则不启用抓取阶段筛选）
+        try:
+            mn = int(self.cfg.required_word_min) if self.cfg.required_word_min is not None else None
+        except Exception:
+            mn = None
+        self._word_min: Optional[int] = mn
 
     # ---------------- DB helpers ----------------
     def _db_connect(self) -> sqlite3.Connection:
@@ -345,24 +397,8 @@ class NewsScraper:
         return pool[:maxn]
 
     def _fetch_urls(self) -> List[str]:
-        mode = (self.cfg.mode or "remote").lower()
-        if mode == "local":
-            return self._fetch_urls_local_gdelt()
-        headers = {
-            "Authorization": f"Bearer {self.cfg.api_token}",
-            "Content-Type": "application/json",
-            "User-Agent": random.choice(
-                [
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-                ]
-            ),
-        }
-        data = _http_post(self.cfg.api_url, {}, headers, self.cfg.timeout) or {}
-        urls = data.get("urls") if isinstance(data, dict) else data
-        if not isinstance(urls, list):
-            return []
-        return [u for u in urls if isinstance(u, str) and u.startswith("http")]
+        # Local-only: fetch from GDELT using configured sites
+        return self._fetch_urls_local_gdelt()
 
     # -------- Local GDELT mode --------
     def _gdelt_build_query(self, sites: List[str]) -> str:
@@ -380,7 +416,7 @@ class NewsScraper:
         }
         url = f"{GDELT_BASE}?{urlencode(params)}"
         try:
-            r = requests.get(url, timeout=self.cfg.timeout, headers={"User-Agent": "Mozilla/5.0"})
+            r = requests.get(url, timeout=self.cfg.timeout, headers=_HTTP_HEADERS)
             r.raise_for_status()
             # ensure JSON-ish
             ct = (r.headers.get("Content-Type") or "").lower()
@@ -400,27 +436,19 @@ class NewsScraper:
             lv = (a.get("language") or "").strip().lower()
             if lv not in wanted_set:
                 continue
-            u = a.get("url")
+            u = _enforce_https_url(a.get("url"))
             if u and u not in seen:
                 seen.add(u)
                 out.append(u)
         return out
 
     def _fetch_urls_local_gdelt(self) -> List[str]:
-        # read sites
-        sites: List[str] = []
-        try:
-            with open(self.cfg.sites_file, "r", encoding="utf-8") as f:
-                for ln in f:
-                    s = (ln or "").strip()
-                    if s and not s.startswith("#"):
-                        sites.append(s)
-        except Exception:
-            pass
+        # Build from embedded domains list
+        sites: List[str] = list(_EMBEDDED_SITES)
         if not sites:
             return []
 
-        # batch queries to reduce 'keywords too common'
+        # Batch queries to reduce 'keywords too common'
         batch_size = 5
         all_urls: List[str] = []
         seen = set()
@@ -500,7 +528,7 @@ class NewsScraper:
 
         # 为了避免无限循环：最多启动若干补充轮（含初始轮）
         # 这里不新增配置，采用与并发规模相关的安全上限
-        max_rounds = 5
+        max_rounds = 30
         rounds = 0
 
         while len(success_arts) < target_success and rounds < max_rounds:
@@ -534,12 +562,23 @@ class NewsScraper:
 
             # 抓取该批
             with ThreadPoolExecutor(max_workers=max(1, self.cfg.concurrency)) as ex:
-                futs = {ex.submit(self._scrape_one, total_attempts + i + 1, u): u for i, u in enumerate(batch)}
+                futs = {
+                    ex.submit(self._scrape_one, total_attempts + i + 1, u): u
+                    for i, u in enumerate(batch)
+                }
                 for fut in as_completed(futs):
                     total_attempts += 1
                     a = fut.result()
                     if a:
-                        success_arts.append(a)
+                        # 抓取阶段若配置了字数区间，只累计满足要求的文章
+                        try:
+                            ok_wc = True
+                            if self._word_min is not None:
+                                ok_wc = a.word_count >= self._word_min
+                            if ok_wc:
+                                success_arts.append(a)
+                        except Exception:
+                            success_arts.append(a)
                         if len(success_arts) >= target_success:
                             break
 
@@ -553,7 +592,10 @@ class NewsScraper:
         failed_count = max(0, total_attempts - len(success_arts))
 
         res = ScrapeResults(
-            total=total_attempts, success=len(success_arts), failed=failed_count, articles=success_arts
+            total=total_attempts,
+            success=len(success_arts),
+            failed=failed_count,
+            articles=success_arts,
         )
 
         # 仅标记成功的URL，失败不入库以便后续机会重试

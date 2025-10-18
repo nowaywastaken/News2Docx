@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -8,12 +7,11 @@ from news2docx.core.utils import ensure_directory
 
 
 def runs_base_dir(conf: Optional[dict] = None) -> Path:
-    base = (
-        os.getenv("RUNS_DIR")
-        or (conf.get("runs_dir") if isinstance(conf, dict) else None)
-        or "runs"
-    )
-    return Path(str(base))
+    """Return fixed runs directory path.
+
+    This path is hard-coded to `runs` and does not read from config or env.
+    """
+    return Path("runs")
 
 
 def new_run_dir(base: Optional[Path] = None) -> Path:
