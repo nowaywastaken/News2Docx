@@ -187,27 +187,19 @@ def test_now_stamp_format():
 def test_free_chat_models_filter(monkeypatch):
     from news2docx.ai import selector
 
-    fake_payload = {
-        "data": [
-            {"id": "Qwen/Qwen2-7B-Instruct"},
-            {"id": "Pro/Qwen/Qwen2-7B-Instruct"},
-            {"id": "mistralai/Mistral-7B-Instruct-v0.2"},
-            {"id": "unknown-model/x"},
-        ]
-    }
-
-    class R:
-        status_code = 200
-
-        def json(self):
-            return fake_payload
-
-        def raise_for_status(self):
-            return None
-
-    monkeypatch.setattr(selector.requests, "get", lambda *a, **k: R())
+    # 模拟定价页抓取返回混合列表，free_chat_models 应过滤 Pro/
+    monkeypatch.setattr(
+        __import__("news2docx.ai.free_models_scraper", fromlist=["scrape_free_models"]),
+        "scrape_free_models",
+        lambda *a, **k: [
+            "Qwen/Qwen2-7B-Instruct",
+            "Pro/Qwen/Qwen2-7B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.2",
+            "unknown-model/x",
+        ],
+        raising=True,
+    )
     ms = selector.free_chat_models()
-    # Should include known free and exclude Pro/
     assert any("Qwen2-7B" in m for m in ms)
     assert all(not m.startswith("Pro/") for m in ms)
 

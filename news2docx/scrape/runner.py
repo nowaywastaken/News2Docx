@@ -23,7 +23,7 @@ GDELT_BASE = "https://api.gdeltproject.org/api/v2/doc/doc"
 # Hardcoded crawler parameters (ignore config values)
 # These constants define the crawler behavior regardless of external config.
 _HARDCODED_MAX_URLS = 10
-_HARDCODED_CONCURRENCY = 4
+_HARDCODED_CONCURRENCY = 10
 _HARDCODED_TIMEOUT = 10
 _HARDCODED_PICK_MODE = "random"  # random | top
 _HARDCODED_RANDOM_SEED: Optional[int] = None
@@ -84,7 +84,7 @@ class ScrapeConfig:
     gdelt_sort: str = field(default_factory=lambda: os.getenv("GDELT_SORT", "datedesc"))
     # The fields below are kept for backward compatibility but ignored at runtime.
     timeout: int = 30
-    concurrency: int = 4
+    concurrency: int = 10
     max_urls: int = 1
     pick_mode: str = field(default_factory=lambda: os.getenv("CRAWLER_PICK_MODE", "random"))
     random_seed: Optional[int] = field(

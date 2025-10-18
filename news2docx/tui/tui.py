@@ -4,6 +4,7 @@ import ast as _ast
 import json as _json
 import json as _json2
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -84,11 +85,14 @@ def _one_click(conf: Dict[str, Any]) -> None:
             ]
             done_count = 0
             done_translate = 0
+            current_article = None  # 最近一次处理的文章编号
+            last_label = "准备中…"
             last_pos = 0
 
             def _scan_new_lines(text: str) -> None:
-                nonlocal total_files, done_count, done_translate
+                nonlocal total_files, done_count, done_translate, current_article, last_label
                 for ln in text.splitlines():
+                    low_ln = ln.lower()
                     if "[TASK START]" in ln and "news2docx.engine.batch" in ln:
                         try:
                             js = ln.split("[TASK START]")[-1].strip()
@@ -97,13 +101,40 @@ def _one_click(conf: Dict[str, Any]) -> None:
                                 total_files = max(1, int(obj["count"]))
                         except Exception:
                             pass
+                    # 记录当前文章编号
+                    if "news2docx.engine.article" in ln and "processing article" in ln:
+                        try:
+                            # … processing article N
+                            idx = int(re.findall(r"processing article\s+(\d+)", ln)[0])
+                            current_article = idx
+                        except Exception:
+                            pass
+                    # 阶段完成事件 -> 转换为中文提示
                     if "news2docx.engine.stage" in ln:
-                        low = ln.lower()
                         for st in stages:
-                            if st in low:
+                            if st in low_ln:
                                 done_count += 1
                                 if st == "translate done":
                                     done_translate += 1
+                                    if current_article is not None:
+                                        last_label = f"翻译了第{current_article}篇新闻"
+                                    else:
+                                        last_label = "翻译完成"
+                                elif st == "clean done":
+                                    if current_article is not None:
+                                        last_label = f"清洗了第{current_article}篇新闻原文"
+                                    else:
+                                        last_label = "清洗完成"
+                                elif st == "adjust done":
+                                    if current_article is not None:
+                                        last_label = f"调整了第{current_article}篇字数"
+                                    else:
+                                        last_label = "字数调整完成"
+                                elif st == "merge done":
+                                    if current_article is not None:
+                                        last_label = f"合并了第{current_article}篇短段落"
+                                    else:
+                                        last_label = "合并短段完成"
                                 break
 
             while t.is_alive():
@@ -119,8 +150,7 @@ def _one_click(conf: Dict[str, Any]) -> None:
                     pass
                 total_steps = total_files * len(stages)
                 pct = 0 if total_steps == 0 else int(min(99, (done_count * 100) / total_steps))
-                label = f"阶段 {done_count}/{total_steps}｜完成 {done_translate}/{total_files} 篇"
-                progress.update(task, completed=pct, stage=label)
+                progress.update(task, completed=pct, stage=last_label)
             if not processed_path["p"]:
                 _last_ctx["failed_stage"] = "process"
                 progress.update(task, stage="处理失败")
@@ -295,24 +325,18 @@ def _doctor(conf: Dict[str, Any]) -> None:
     except Exception:
         msgs.append("可用免费模型：获取失败（稍后再试）")
 
-    # Export directory
+    # 静默检查导出目录与 runs 目录（不在 TUI 显示）
     try:
         from news2docx.cli.common import desktop_outdir
 
-        outdir = desktop_outdir()
-        msgs.append(f"导出目录：{outdir}")
-    except Exception as e:
+        _ = desktop_outdir()
+    except Exception:
         ok = False
-        msgs.append(f"导出目录不可用：{e}")
-
-    # Runs directory
     try:
         base_dir = runs_base_dir(conf)
         base_dir.mkdir(parents=True, exist_ok=True)
-        msgs.append(f"runs 目录：{base_dir}")
-    except Exception as e:
+    except Exception:
         ok = False
-        msgs.append(f"runs 目录不可用：{e}")
 
     style = "bold green" if ok else "bold red"
     title = "体检通过" if ok else "体检失败"
@@ -434,7 +458,7 @@ def _config_menu(conf_path: Path, conf: Dict[str, Any]) -> Dict[str, Any]:
     )
     updated: Dict[str, Any] = dict(conf)
 
-    def _mask_secret(val: Optional[str], show_first: int = 2, show_last: int = 4) -> str:
+    def _mask_secret(val: Optional[str], show_first: int = 2, show_last: int = 10) -> str:
         s = str(val or "")
         if not s:
             return "(未设置)"
@@ -517,23 +541,78 @@ def _config_menu(conf_path: Path, conf: Dict[str, Any]) -> Dict[str, Any]:
     return updated
 
 
+def _ensure_api_key(conf: Dict[str, Any]) -> Dict[str, Any]:
+    """若缺少 API 密钥，则在进入主程序前提示并收集。"""
+    key = (
+        os.getenv("SILICONFLOW_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or conf.get("openai_api_key")
+    )
+    if key:
+        return conf
+    console.print("此应用需要前往硅基流动官网申请API密钥才可继续使用。网址：siliconflow.cn")
+    try:
+        new_key = Prompt.ask("请在此处粘贴你的密钥").strip()
+    except (KeyboardInterrupt, EOFError):
+        console.print(Panel.fit("已退出", title="中断", style="yellow"))
+        raise SystemExit(0)
+    if not new_key:
+        console.print(Panel.fit("未提供密钥，无法继续。", title="提示", style="yellow"))
+        raise SystemExit(0)
+    # 写入环境并保存到配置
+    os.environ["SILICONFLOW_API_KEY"] = new_key
+    os.environ["OPENAI_API_KEY"] = new_key
+    conf = dict(conf)
+    conf["openai_api_key"] = new_key
+    try:
+        if yaml is not None:
+            with open("config.yml", "w", encoding="utf-8") as f:
+                yaml.safe_dump(conf, f, allow_unicode=True, sort_keys=False)
+    except Exception:
+        pass
+    return conf
+
+
+def _silence_console_logs() -> None:
+    """在 TUI 运行期间关闭控制台日志输出。"""
+    try:
+        import logging as _logging
+
+        os.environ["N2D_TUI_SILENT"] = "1"
+        root = _logging.getLogger("")
+        to_keep = []
+        for h in list(root.handlers):
+            try:
+                # 仅移除控制台 StreamHandler，保留 FileHandler
+                if isinstance(h, _logging.FileHandler):
+                    to_keep.append(h)
+                    continue
+                if isinstance(h, _logging.StreamHandler):
+                    # 非文件的流式处理器（控制台）丢弃
+                    continue
+            except Exception:
+                pass
+            to_keep.append(h)
+        root.handlers = to_keep
+    except Exception:
+        pass
+
+
 def main() -> None:
-    """Entry for Rich-based TUI."""
-    console.print(Panel.fit(
-        "News2Docx — 一键把英文新闻翻译成中文并导出到桌面\n\n"
-        "使用说明：\n"
-        "1) 系统会自动抓取并挑选10篇英文新闻；\n"
-        "2) 自动清洗、分段并翻译为中文；\n"
-        "3) 仅导出成功的文章到桌面“英文新闻稿”文件夹；\n"
-        "4) 首次使用请先在“设置”里填写翻译服务密钥。\n\n"
-        "提示：翻译服务密钥须前往硅基流动官网申请",
-        style="cyan",
-        title="欢迎",
-    ))
+    """Entry for Rich-based TUI（顶部蓝框欢迎语，静默控制台日志）。"""
     # init logging and load config
     prepare_logging("log.txt")
     conf = load_app_config("config.yml")
-    # Mandatory health check at startup
+    # 主程序启动前强制收集密钥
+    conf = _ensure_api_key(conf)
+    # 关闭控制台日志输出（TUI期）
+    _silence_console_logs()
+    # 顶部欢迎蓝框
+    try:
+        console.print(Panel.fit("欢迎使用News to Docx", style="cyan"))
+    except Exception:
+        pass
+    # 进入主程序前默认体检一次
     _doctor(conf)
 
     while True:

@@ -34,6 +34,7 @@ def load_app_config(config_path: str) -> Dict[str, Any]:
             minimal = (
                 "openai_api_base: https://api.siliconflow.cn/v1\n"
                 'openai_api_key: ""\n'
+                "processing_word_min: 350\n"
                 "target_language: Chinese\n"
                 "merge_short_paragraph_chars: 80\n"
                 "processing_forbidden_prefixes: []\n"
@@ -107,7 +108,7 @@ def run_scrape(conf: Dict[str, Any]) -> str:
         gdelt_max_per_call=int(conf.get("gdelt_max_per_call") or 50),
         gdelt_sort=(conf.get("gdelt_sort") or "datedesc"),
         max_urls=int(conf.get("max_urls") or 10),
-        concurrency=int(conf.get("concurrency") or 4),
+        concurrency=int(conf.get("concurrency") or 10),
         timeout=int(conf.get("timeout") or 10),
         pick_mode=str(conf.get("pick_mode") or "random"),
         random_seed=(int(conf.get("random_seed")) if conf.get("random_seed") is not None else None),
