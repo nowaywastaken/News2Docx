@@ -63,10 +63,11 @@ def _get_general_model_from_config() -> Optional[str]:
     return m_g
 
 
-TARGET_WORD_MIN = 400
+# 默认英文最少字数下限
+TARGET_WORD_MIN = 350
 # 放弃上限：仅保留下限，内部如需“max”一律视为极大值
 TARGET_WORD_MAX = 10**9
-DEFAULT_CONCURRENCY = int(os.getenv("CONCURRENCY", "4"))
+DEFAULT_CONCURRENCY = int(os.getenv("CONCURRENCY", "10"))
 
 _CACHE_DIR = os.getenv("N2D_CACHE_DIR", ".n2d_cache")
 os.makedirs(_CACHE_DIR, exist_ok=True)

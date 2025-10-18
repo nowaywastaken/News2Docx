@@ -44,7 +44,7 @@ def _chat_once(
             content = data["choices"][0]["message"]["content"]
             return model, content
         # 429 在限定重试窗口内可重试（轮次由环境控制，默认4轮）
-        _attempts = int(os.getenv("N2D_CHAT_ATTEMPTS", "4") or 4)
+        _attempts = int(os.getenv("N2D_CHAT_ATTEMPTS", "10") or 10)
         if r.status_code == 429 and attempt < max(0, _attempts - 1):
             # backoff handled by caller (sleep) and retry
             return model, None
@@ -77,7 +77,7 @@ def chat_first(
         ms = ["Qwen/Qwen2-7B-Instruct"]
 
     # 轮次由环境变量控制，默认3轮；每轮并发投递到所有模型
-    _attempts = int(os.getenv("N2D_CHAT_ATTEMPTS", "4") or 4)
+    _attempts = int(os.getenv("N2D_CHAT_ATTEMPTS", "10") or 10)
     _attempts = max(1, min(8, _attempts))
     for attempt in range(_attempts):
         # Jittered backoff on attempts > 0 (shared across models)

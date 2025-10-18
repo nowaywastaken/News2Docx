@@ -182,7 +182,7 @@ RPG:
 
   non_functional:
     - "TUI 启动体检 < 2s"
-    - "抓取并发默认 4；10 篇端到端 < 2 分钟"
+    - "抓取并发默认 10；10 篇端到端 < 2 分钟"
     - "日志规范：INFO 级别默认，支持 JSON 格式输出（N2D_LOG_JSON=1）"
 
 implementation:

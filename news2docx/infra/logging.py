@@ -253,11 +253,12 @@ def unified_print(message: str, program: str, task_type: str, level: str = "info
     """
     logger = get_unified_logger(program, task_type)
     formatted = f"[{program}][{task_type}] {message}"
-    # Always echo to console for CLI UX
-    try:
-        print(formatted)
-    except Exception:
-        pass
+    # 若开启 TUI 静默模式，则不向控制台回显
+    if os.getenv("N2D_TUI_SILENT", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        try:
+            print(formatted)
+        except Exception:
+            pass
     lvl = str(level or "info").strip().lower()
     if lvl == "trace":
         logger.trace(message)  # type: ignore[attr-defined]
