@@ -90,7 +90,8 @@ def prepare_logging(log_file: str) -> None:
     except Exception:
         pass
 
-    unified_print("logging initialized (console + file)", "ui", "startup", level="info")
+    # 启动时不再输出“logging initialized”提示，避免控制台噪声与重复显示
+    # 如需调试，可手动在此处使用 get_unified_logger("ui", "startup").debug(...)
 
 
 # ---------------- Orchestration (scrape -> process -> export) ----------------
