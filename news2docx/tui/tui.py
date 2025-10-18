@@ -9,13 +9,10 @@ from typing import Any, Dict, Optional
 import requests
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+import re
+import json as _json2
+from typing import Any, Dict, Optional
 from rich.prompt import Prompt
 import json as _json
 import ast as _ast
@@ -65,7 +62,7 @@ def _one_click(conf: Dict[str, Any]) -> None:
                 return
             progress.update(task, advance=30, stage="抓取完成")
 
-            # Stage 2: process (run in a thread, slowly advance up to 85)
+            # Stage 2: process（并发阶段按日志阶段数计算真实进度）
             processed_path: Dict[str, Optional[str]] = {"p": None}
 
             def _do_process() -> None:
@@ -77,11 +74,55 @@ def _one_click(conf: Dict[str, Any]) -> None:
             t = threading.Thread(target=_do_process, daemon=True)
             progress.update(task, stage="处理与翻译…")
             t.start()
-            cur = 30
+
+            log_path = Path("log.txt")
+            total_files = 10
+            stages = [
+                "adjust done",
+                "news check done",
+                "clean done",
+                "merge done",
+                "translate done",
+            ]
+            done_count = 0
+            done_translate = 0
+            last_pos = 0
+
+            def _scan_new_lines(text: str) -> None:
+                nonlocal total_files, done_count, done_translate
+                for ln in text.splitlines():
+                    if "[TASK START]" in ln and "news2docx.engine.batch" in ln:
+                        try:
+                            js = ln.split("[TASK START]")[-1].strip()
+                            obj = _json2.loads(js)
+                            if isinstance(obj, dict) and isinstance(obj.get("count"), int):
+                                total_files = max(1, int(obj["count"]))
+                        except Exception:
+                            pass
+                    if "news2docx.engine.stage" in ln:
+                        low = ln.lower()
+                        for st in stages:
+                            if st in low:
+                                done_count += 1
+                                if st == "translate done":
+                                    done_translate += 1
+                                break
+
             while t.is_alive():
                 time.sleep(0.3)
-                cur = min(85, cur + 1)
-                progress.update(task, completed=cur)
+                try:
+                    if log_path.exists():
+                        data = log_path.read_text(encoding="utf-8", errors="ignore")
+                        if last_pos < len(data):
+                            chunk = data[last_pos:]
+                            last_pos = len(data)
+                            _scan_new_lines(chunk)
+                except Exception:
+                    pass
+                total_steps = total_files * len(stages)
+                pct = 0 if total_steps == 0 else int(min(99, (done_count * 100) / total_steps))
+                label = f"阶段 {done_count}/{total_steps}｜完成 {done_translate}/{total_files} 篇"
+                progress.update(task, completed=pct, stage=label)
             if not processed_path["p"]:
                 _last_ctx["failed_stage"] = "process"
                 progress.update(task, stage="处理失败")
@@ -128,6 +169,22 @@ def _one_click(conf: Dict[str, Any]) -> None:
         console.print(Panel.fit("已取消当前操作", title="中断", style="yellow"))
 
 
+def _clear_crawled_cache(conf: Dict[str, Any]) -> None:
+    """Remove crawled URL cache database to force re-scrape next runs."""
+    try:
+        db_path = conf.get("db_path")
+        if not db_path:
+            db_path = str((Path.cwd() / ".n2d_cache" / "crawled.sqlite3"))
+        p = Path(str(db_path))
+        if p.exists():
+            p.unlink()
+            console.print(Panel.fit(f"已清除缓存：{p}", title="完成", style="bold green"))
+        else:
+            console.print(Panel.fit(f"未发现缓存文件：{p}", title="提示", style="yellow"))
+    except Exception as e:
+        console.print(Panel.fit(f"清除失败：{e}", title="错误", style="bold red"))
+
+
 def _one_click_with_mode(conf: Dict[str, Any], mode: str) -> None:
     # Set pipeline mode for this run
     import os as _os
@@ -141,7 +198,23 @@ def _doctor(conf: Dict[str, Any]) -> None:
     ok = True
     msgs: list[str] = []
 
-    # API key (SiliconFlow preferred)
+    # 1) 网络连通性（Cloudflare）
+    try:
+        r = requests.get("https://1.1.1.1/cdn-cgi/trace", timeout=5)
+        if 200 <= r.status_code < 400:
+            msgs.append("网络连通性：Cloudflare 正常 (1.1.1.1)")
+        else:
+            r2 = requests.head("https://cloudflare.com", timeout=5, allow_redirects=True)
+            if 200 <= r2.status_code < 400:
+                msgs.append("网络连通性：Cloudflare 正常 (cloudflare.com)")
+            else:
+                ok = False
+                msgs.append(f"网络连通性：异常（状态 {r.status_code}/{r2.status_code}）")
+    except Exception as e:
+        ok = False
+        msgs.append(f"网络连通性：异常（{e}）")
+
+    # 2) 硅基流动 API Key 有效性
     key = (
         os.getenv("SILICONFLOW_API_KEY")
         or os.getenv("OPENAI_API_KEY")
@@ -149,37 +222,79 @@ def _doctor(conf: Dict[str, Any]) -> None:
     )
     if not key:
         ok = False
-        msgs.append("缺少 API Key（SILICONFLOW_API_KEY 或 OPENAI_API_KEY）")
-
-    # Reachability: SiliconFlow base and models
-    base = SILICON_BASE
-    try:
-        root_resp = requests.head(base, timeout=5, allow_redirects=True)
-        code_root = root_resp.status_code
+        msgs.append("硅基流动 Key：未设置（SILICONFLOW_API_KEY / OPENAI_API_KEY）")
+    else:
         try:
-            m_resp = requests.get(f"{base}/models", timeout=8)
-            code_models = m_resp.status_code
+            url = f"{SILICON_BASE}/user/info"
+            h = {"Authorization": f"Bearer {key}"}
+            resp = requests.get(url, headers=h, timeout=8)
+            if resp.status_code == 200:
+                info = resp.json() if resp.content else {}
+                uid = info.get("id") or info.get("user_id") or "***"
+                msgs.append(f"硅基流动 Key：有效（账号 {uid}）")
+            elif resp.status_code in {401, 403}:
+                ok = False
+                msgs.append("硅基流动 Key：无效或无权限（401/403）")
+            else:
+                ok = False
+                msgs.append(f"硅基流动 Key：检测失败（HTTP {resp.status_code}）")
+        except Exception as e:
+            ok = False
+            msgs.append(f"硅基流动 Key：检测异常（{e}）")
+
+    # 3) GDELT API 可访问性（更稳健：先 HEAD 基础地址，再 GET 最小查询；放宽 Content-Type 判定）
+    try:
+        from urllib.parse import urlencode as _urlencode
+        from news2docx.scrape.runner import GDELT_BASE as _GDELT
+
+        # 基础连通性
+        try:
+            hd = requests.head(_GDELT, timeout=5, allow_redirects=True)
+            base_ok = 200 <= hd.status_code < 400
         except Exception:
-            code_models = None
-        if (200 <= code_root < 400 or code_root in {401, 403}) and (code_models in {200, 401, 403}):
-            msgs.append(
-                f"SiliconFlow 在线：HEAD {code_root}；/models {code_models if code_models is not None else 'N/A'}"
-            )
+            base_ok = False
+
+        params = {
+            "mode": "ArtList",
+            "format": "json",
+            "timespan": "1d",
+            "sort": "datedesc",
+            "query": "domainis:theguardian.com",
+            "maxrecords": 1,
+        }
+        test_url = f"{_GDELT}?{_urlencode(params)}"
+        gr = requests.get(test_url, timeout=8)
+        if 200 <= gr.status_code < 400:
+            # 不强依赖 Content-Type，优先尝试解析 JSON
+            parsed = None
+            try:
+                parsed = gr.json()
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict) and "articles" in parsed:
+                msgs.append("GDELT：可访问（返回JSON）")
+            else:
+                # 可能是文本/HTML 或空内容，但 HTTP 正常，视为可达
+                msgs.append("GDELT：可访问（返回非标准JSON，可能被限流或无数据）")
+        elif gr.status_code in {401, 403, 429}:
+            # 权限或频率受限，仍视为可达
+            msgs.append(f"GDELT：可访问（受限，HTTP {gr.status_code}）")
         else:
             ok = False
-            msgs.append(
-                f"SiliconFlow 不可达或错误：HEAD {code_root}；/models {code_models if code_models is not None else 'N/A'}"
-            )
+            if base_ok:
+                msgs.append(f"GDELT：基础可达，但查询失败（HTTP {gr.status_code}）")
+            else:
+                msgs.append(f"GDELT：不可达（HTTP {gr.status_code}）")
     except Exception as e:
         ok = False
-        msgs.append(f"SiliconFlow 探测失败：{e}")
+        msgs.append(f"GDELT：检测异常（{e}）")
 
-    # Show discovered free models
+    # 显示可用免费模型（非关键）
     try:
         ms = free_chat_models()
-        msgs.append(f"可用免费模型（筛）：{', '.join(ms)}")
+        msgs.append(f"可用免费模型：{', '.join(ms)}")
     except Exception:
-        pass
+        msgs.append("可用免费模型：获取失败（稍后再试）")
 
     # Export directory
     try:
@@ -299,23 +414,37 @@ def _config_menu(conf_path: Path, conf: Dict[str, Any]) -> Dict[str, Any]:
 
     # 精简后的可编辑字段
     fields: list[tuple[str, str, str]] = [
-        ("openai_api_key", "secret", "API Key (用于 SiliconFlow)"),
-        ("processing_word_min", "int", "英文原文字数下限 (硬性)"),
-        ("processing_forbidden_prefixes", "list", "过滤前缀（逗号分隔）"),
-        ("processing_forbidden_patterns", "list", "过滤正则（逗号分隔）"),
-        ("export_font_zh_name", "str", "中文字体名"),
+        ("openai_api_key", "secret", "翻译服务密钥（必填）"),
+        ("processing_word_min", "int", "英文最少字数（过短不翻译）"),
+        ("processing_forbidden_prefixes", "list", "过滤前缀（可选，逗号分隔）"),
+        ("processing_forbidden_patterns", "list", "过滤规则（正则，可选）"),
+        ("export_font_zh_name", "str", "中文字体"),
         ("export_font_zh_size", "float", "中文字号（pt）"),
-        ("export_font_en_name", "str", "英文字体名"),
+        ("export_font_en_name", "str", "英文字体"),
         ("export_font_en_size", "float", "英文字号（pt）"),
-        ("export_title_bold", "bool", "标题加粗（true/false）"),
+        ("export_title_bold", "bool", "标题加粗（是/否）"),
     ]
 
     console.print(
         Panel.fit(
-            "配置编辑器：回车保留当前值，输入新值后回车保存该项。", title="配置", style="cyan"
+            "配置编辑器：回车保留当前值，输入新值后回车保存该项。\n"
+            "提示：翻译服务密钥须前往硅基流动官网申请",
+            title="配置",
+            style="cyan",
         )
     )
     updated: Dict[str, Any] = dict(conf)
+
+    def _mask_secret(val: Optional[str], show_first: int = 2, show_last: int = 4) -> str:
+        s = str(val or "")
+        if not s:
+            return "(未设置)"
+        n = len(s)
+        if n <= show_last:
+            return "*" * max(0, n - 1) + s[-1]
+        head = s[: max(0, show_first)] if n > show_first else ""
+        tail = s[-show_last:]
+        return f"{head}{'*' * max(0, n - len(head) - len(tail))}{tail}"
 
     for key, typ, label in fields:
         cur = updated.get(key)
@@ -330,7 +459,12 @@ def _config_menu(conf_path: Path, conf: Dict[str, Any]) -> Dict[str, Any]:
                 else (str(cur) if cur is not None else "")
             )
         try:
-            new_val = Prompt.ask(f"{label} [{key}]", default="" if typ == "secret" else shown)
+            prompt_msg = f"{label} [{key}]"
+            if typ == "secret":
+                # 显示打码后的当前值，回车留空则保持不变
+                masked = _mask_secret(str(cur) if cur else None)
+                prompt_msg += f"（当前：{masked}；留空不变）"
+            new_val = Prompt.ask(prompt_msg, default="" if typ == "secret" else shown)
         except (KeyboardInterrupt, EOFError):
             console.print(Panel.fit("已取消配置编辑。", title="中断", style="yellow"))
             return updated
@@ -386,7 +520,17 @@ def _config_menu(conf_path: Path, conf: Dict[str, Any]) -> Dict[str, Any]:
 
 def main() -> None:
     """Entry for Rich-based TUI."""
-    console.print(Panel.fit("News2Docx TUI (Rich)", style="cyan", title="UI"))
+    console.print(Panel.fit(
+        "News2Docx — 一键把英文新闻翻译成中文并导出到桌面\n\n"
+        "使用说明：\n"
+        "1) 系统会自动抓取并挑选10篇英文新闻；\n"
+        "2) 自动清洗、分段并翻译为中文；\n"
+        "3) 仅导出成功的文章到桌面“英文新闻稿”文件夹；\n"
+        "4) 首次使用请先在“设置”里填写翻译服务密钥。\n\n"
+        "提示：翻译服务密钥须前往硅基流动官网申请",
+        style="cyan",
+        title="欢迎",
+    ))
     # init logging and load config
     prepare_logging("log.txt")
     conf = load_app_config("config.yml")
@@ -395,11 +539,10 @@ def main() -> None:
 
     while True:
         console.print("选择操作：")
-        console.print("  1) 免费白嫖通道（抓取→筛选→清洗→合并→翻译→导出）")
-        console.print("  2) 付费快速通道（抓取→检查→清洗→调整→合并→翻译→导出）")
-        console.print("  3) 配置（查看/修改 config.yml）")
-        console.print("  4) 体检（检查网络与配置）")
-        console.print("  5) 退出")
+        console.print("  1) 开始处理（自动：抓取→筛选→翻译→导出）")
+        console.print("  2) 设置（查看/修改配置）")
+        console.print("  3) 体检（检查网络与密钥）")
+        console.print("  4) 清除已抓网址缓存")
         try:
             choice = Prompt.ask("输入选项", default="1").strip().lower()
         except KeyboardInterrupt:
@@ -413,13 +556,11 @@ def main() -> None:
         if choice == "1":
             _one_click_with_mode(conf, "free")
         elif choice == "2":
-            _one_click_with_mode(conf, "paid")
-        elif choice == "3":
             conf = _config_menu(Path("config.yml"), conf)
-        elif choice == "4":
+        elif choice == "3":
             _doctor(conf)
-        elif choice == "5":
-            break
+        elif choice == "4":
+            _clear_crawled_cache(conf)
         else:
             console.print("无效选项，请重试。")
 

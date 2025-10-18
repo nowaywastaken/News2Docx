@@ -13,7 +13,6 @@ import requests
 
 from news2docx.core.utils import now_stamp
 from news2docx.ai.selector import (
-    affordable_chat_models,
     free_chat_models,
     set_runtime_models_override,
 )
@@ -730,7 +729,8 @@ def process_article(
 ) -> Dict[str, Any]:
     start = time.time()
     log_processing_step("engine", "article", f"processing article {article.index}")
-    pipeline_mode = os.getenv("N2D_PIPELINE_MODE", "paid").strip().lower()
+    # 仅保留免费通道
+    pipeline_mode = "free"
     # Stage 0: word-bound filter for free pipeline OR news check + clean for paid
     if pipeline_mode == "free":
         try:
@@ -770,6 +770,14 @@ def process_article(
     if not base_clean:
         base_clean = article.content
     is_news = _is_probably_news(clean_title, base_clean)
+    try:
+        log_processing_step("engine", "stage", "news check done")
+    except Exception:
+        pass
+    try:
+        log_processing_step("engine", "stage", "clean done")
+    except Exception:
+        pass
     if (
         os.getenv("N2D_ENFORCE_NEWS", "").strip().lower() in ("1", "true", "yes", "on")
         and not is_news
@@ -809,6 +817,10 @@ def process_article(
             adjusted_raw, final_wc = _adjust_word_count_roles(base_clean)
         else:
             adjusted_raw, final_wc = _adjust_word_count(base_clean)
+    try:
+        log_processing_step("engine", "stage", "adjust done")
+    except Exception:
+        pass
 
     # Stage 2: sanitize again after AI editing
     adjusted, rm1, kinds1 = _sanitize_meta(
@@ -819,6 +831,10 @@ def process_article(
 
     # Stage 3: merge short paragraphs by words (default 80 words)
     adjusted = _merge_short_paragraphs_words(adjusted, max_words=int(merge_short_chars or 80))
+    try:
+        log_processing_step("engine", "stage", "merge done")
+    except Exception:
+        pass
 
     # Enforce minimal word bound once more after cleaning/merging
     try:
@@ -853,6 +869,10 @@ def process_article(
     )
     if not translated:
         translated = translated_raw
+    try:
+        log_processing_step("engine", "stage", "translate done")
+    except Exception:
+        pass
     # Title translation on cleaned title
     translated_title = _translate_title(clean_title or article.title, target_lang)
 
@@ -913,19 +933,14 @@ def process_articles_two_steps_concurrent(
 ) -> Dict[str, Any]:
     t0 = time.time()
     log_task_start("engine", "batch", {"count": len(articles), "target_lang": target_lang})
-    pipeline_mode = os.getenv("N2D_PIPELINE_MODE", "paid").strip().lower()
+    # 仅保留免费通道
+    pipeline_mode = "free"
     # Prefetch models via scraper for this run and inject as per-run override
     try:
         # 仅在本批任务开始时抓取定价页一次，并注入全局覆盖
-        if pipeline_mode == "paid":
-            from news2docx.ai.free_models_scraper import scrape_affordable_models
+        from news2docx.ai.free_models_scraper import scrape_free_models
 
-            max_price = float(os.getenv("N2D_MAX_PRICE", "1") or 1)
-            models = scrape_affordable_models(max_price=max_price, timeout_ms=10000)
-        else:
-            from news2docx.ai.free_models_scraper import scrape_free_models
-
-            models = scrape_free_models(timeout_ms=10000)
+        models = scrape_free_models(timeout_ms=10000)
         if models:
             set_runtime_models_override(models)
             log_processing_step(
