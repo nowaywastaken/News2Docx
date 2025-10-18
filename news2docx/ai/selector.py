@@ -4,7 +4,6 @@ import os
 from typing import List, Optional
 
 import requests
-import os
 
 # SiliconFlow OpenAI-compatible base (HTTPS enforced)
 SILICON_BASE = "https://api.siliconflow.cn/v1"

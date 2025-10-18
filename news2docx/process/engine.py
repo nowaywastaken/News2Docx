@@ -11,11 +11,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from news2docx.core.utils import now_stamp
 from news2docx.ai.selector import (
     free_chat_models,
     set_runtime_models_override,
 )
+from news2docx.core.utils import now_stamp
 from news2docx.infra.logging import (
     log_error,
     log_processing_result,
@@ -72,6 +72,9 @@ _CACHE_DIR = os.getenv("N2D_CACHE_DIR", ".n2d_cache")
 os.makedirs(_CACHE_DIR, exist_ok=True)
 _AI_MIN_INTERVAL_MS = int(os.getenv("OPENAI_MIN_INTERVAL_MS", "0") or 0)
 _LAST_CALL_MS = 0
+
+# Pipeline mode: currently only "free" path is supported
+pipeline_mode = "free"
 
 
 @dataclass
@@ -161,6 +164,7 @@ def _load_word_bounds() -> Tuple[int, int]:
     """
     try:
         from pathlib import Path
+
         import yaml  # type: ignore
 
         p = Path.cwd() / "config.yml"
@@ -492,7 +496,7 @@ def _translate_parallel_by_models(text: str, target_lang: str) -> str:
         mdl = models[i]
         jobs.append((i, mdl, chunk))
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
 
     results: Dict[int, str] = {}
     with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
@@ -729,8 +733,7 @@ def process_article(
 ) -> Dict[str, Any]:
     start = time.time()
     log_processing_step("engine", "article", f"processing article {article.index}")
-    # 仅保留免费通道
-    pipeline_mode = "free"
+    # 仅保留免费通道（保留注释，移除未使用变量）
     # Stage 0: word-bound filter for free pipeline OR news check + clean for paid
     if pipeline_mode == "free":
         try:
@@ -933,8 +936,7 @@ def process_articles_two_steps_concurrent(
 ) -> Dict[str, Any]:
     t0 = time.time()
     log_task_start("engine", "batch", {"count": len(articles), "target_lang": target_lang})
-    # 仅保留免费通道
-    pipeline_mode = "free"
+    # 仅保留免费通道（使用模块级 pipeline_mode 全局配置）
     # Prefetch models via scraper for this run and inject as per-run override
     try:
         # 仅在本批任务开始时抓取定价页一次，并注入全局覆盖

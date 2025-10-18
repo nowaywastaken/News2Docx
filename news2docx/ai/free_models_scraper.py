@@ -4,10 +4,9 @@ import argparse
 import json
 import os
 import re
-import ssl
 import sys
 from contextlib import contextmanager
-from typing import Any, List, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 import requests
 from bs4 import BeautifulSoup

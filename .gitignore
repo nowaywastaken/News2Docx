@@ -10,6 +10,7 @@ logs
 /.venv
 goal.md
 log.txt
+response.html
 *.pyc
 .pytest_cache/
 .ruff_cache/

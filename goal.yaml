@@ -187,21 +187,31 @@ RPG:
 
 implementation:
   files:
-    - path: app.py
+    - path: index.py
+      exports: [load_app_config, prepare_logging, run_scrape, run_process, run_export]
+    - path: news2docx/tui/tui.py
       exports: [main]
-    - path: tui.py
-      exports: [run_tui]
-    - path: config.py
-      exports: [load_config, validate_config]
-    - path: scrape.py
-      exports: [fetch_bundle]   # inputs: AppConfig -> ScrapedBundle
-    - path: process.py
-      exports: [process_bundle] # inputs: ScrapedBundle, AppConfig -> ProcessedResult
-    - path: export.py
-      exports: [export_docx]    # inputs: ProcessedResult, ExportMode, RunPath -> DocxReport
-    - path: ai_provider.py
-      exports: [list_models, translate_text]
-    - path: runs.py
-      exports: [open_run, get_paths] # RunEvent -> RunPath
-    - path: logging_setup.py
-      exports: [setup_logger]
+    - path: news2docx/infra/secure_config.py
+      exports: [secure_load_config]
+    - path: news2docx/infra/logging.py
+      exports: [init_logging, unified_print, log_task_start, log_task_end, log_processing_step, log_processing_result, log_error]
+    - path: news2docx/scrape/runner.py
+      exports: [NewsScraper, ScrapeConfig, save_scraped_data_to_json]
+    - path: news2docx/services/processing.py
+      exports: [articles_from_json, process_articles]
+    - path: news2docx/process/engine.py
+      exports: [Article, process_articles_two_steps_concurrent]
+    - path: news2docx/services/exporting.py
+      exports: [export_processed]
+    - path: news2docx/export/docx.py
+      exports: [DocumentWriter, DocumentConfig]
+    - path: news2docx/ai/selector.py
+      exports: [free_chat_models, set_runtime_models_override]
+    - path: news2docx/ai/free_models_scraper.py
+      exports: [scrape_free_models]
+    - path: news2docx/core/utils.py
+      exports: [now_stamp]
+    - path: news2docx/services/runs.py
+      exports: [runs_base_dir, new_run_dir]
+    - path: news2docx/cli/common.py
+      exports: [ensure_openai_env, desktop_outdir]

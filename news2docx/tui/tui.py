@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ast as _ast
+import json as _json
+import json as _json2
 import os
 import threading
 import time
@@ -10,12 +13,7 @@ import requests
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-import re
-import json as _json2
-from typing import Any, Dict, Optional
 from rich.prompt import Prompt
-import json as _json
-import ast as _ast
 
 # Reuse existing orchestration and helpers from index.py to avoid duplication
 from index import load_app_config, prepare_logging, run_export, run_process, run_scrape
@@ -245,6 +243,7 @@ def _doctor(conf: Dict[str, Any]) -> None:
     # 3) GDELT API 可访问性（更稳健：先 HEAD 基础地址，再 GET 最小查询；放宽 Content-Type 判定）
     try:
         from urllib.parse import urlencode as _urlencode
+
         from news2docx.scrape.runner import GDELT_BASE as _GDELT
 
         # 基础连通性

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from news2docx.process import engine as eng
 
 

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import os
-from typing import Tuple
-
 from news2docx.process import engine as eng
 
 
