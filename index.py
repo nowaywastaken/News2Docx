@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from news2docx.cli.common import ensure_openai_env
-from news2docx.infra.logging import init_logging, unified_print
+from news2docx.infra.logging import init_logging, unified_print, get_unified_logger
 from news2docx.infra.secure_config import secure_load_config
 
 # ---------------- Configuration & Logging ----------------
@@ -49,9 +49,11 @@ def load_app_config(config_path: str) -> Dict[str, Any]:
                 "export_title_bold: true\n"
             )
             p.write_text(minimal, encoding="utf-8")
-            unified_print(
-                "已创建最小配置 config.yml（可在 TUI 中修改）", "ui", "config", level="info"
-            )
+            # 仅写入日志与文件，不向 TUI 标准输出打印，避免打扰界面
+            try:
+                get_unified_logger("ui", "config").info("已创建最小配置 config.yml（可在 TUI 中修改）")
+            except Exception:
+                pass
         except Exception as e:
             unified_print(f"创建最小配置失败：{e}", "ui", "config", level="error")
             raise

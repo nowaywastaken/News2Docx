@@ -178,7 +178,7 @@ def build_logging_config() -> Dict[str, Any]:
             "class": "logging.StreamHandler",
             "level": level,
             "formatter": console_formatter,
-            "filters": ["mdc"],
+            "filters": ["mdc", "suppress_tui_noise"],
             "stream": "ext://sys.stderr",
         }
     }
@@ -191,7 +191,11 @@ def build_logging_config() -> Dict[str, Any]:
         "filters": {
             "mdc": {
                 "()": MDCFilter,
-            }
+            },
+            # 抑制在 TUI 中无关紧要的提示（例如配置初始化信息）
+            "suppress_tui_noise": {
+                "()": "news2docx.infra.logging.SuppressTUINoiseFilter",
+            },
         },
         "formatters": formatters,
         "handlers": handlers,
@@ -217,6 +221,24 @@ def init_logging(force: bool = False) -> None:
     logging.getLogger("").setLevel(_level_from_env("N2D_LOG_LEVEL", "INFO"))
     logging.config.dictConfig(build_logging_config())
     _CONFIGURED = True
+
+
+class SuppressTUINoiseFilter(logging.Filter):
+    """过滤在 TUI 中不需要出现的提示信息。
+
+    当前策略：
+    - 屏蔽来自 `news2docx.ui.config` 的 INFO 及以下级别日志（例如创建最小配置提示）。
+    - 其他日志（含 WARNING/ERROR）仍然透出到控制台（stderr），便于排障。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            name = getattr(record, "name", "")
+            if name.startswith("news2docx.ui.config") and record.levelno <= logging.INFO:
+                return False
+        except Exception:
+            pass
+        return True
 
 
 def _ensure_logging():
