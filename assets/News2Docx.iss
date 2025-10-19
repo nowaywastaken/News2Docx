@@ -1,6 +1,6 @@
 #define MyAppName "News2Docx"
 #ifndef MyAppVersion
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.1.1"
 #endif
 #define MyURL "https://github.com/nowaywastaken/News2Docx"
 
