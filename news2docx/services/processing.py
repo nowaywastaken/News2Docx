@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from news2docx.process.engine import (
-    Article as ProcArticle,
-)
-from news2docx.process.engine import (
-    process_articles_two_steps_concurrent,
-)
+from news2docx.process.engine import Article as ProcArticle
+from news2docx.process.engine import process_articles_two_steps_concurrent
 
 
 def articles_from_json(data: Dict[str, Any]) -> List[ProcArticle]:
-    """Convert JSON dict (scraped) into engine ProcArticle list."""
+    """将 JSON 数据转换为处理引擎的文章列表。"""
     raw = data.get("articles", []) if isinstance(data, dict) else []
     arts: List[ProcArticle] = []
     for a in raw:
@@ -32,31 +28,8 @@ def articles_from_json(data: Dict[str, Any]) -> List[ProcArticle]:
     return arts
 
 
-def articles_from_scraped(objs: List[object]) -> List[ProcArticle]:
-    """Convert scrape.runner.Article list into engine ProcArticle list."""
-    arts: List[ProcArticle] = []
-    for a in objs or []:
-        try:
-            idx = int(getattr(a, "index", 0) or 0)
-        except Exception:
-            idx = 0
-        arts.append(
-            ProcArticle(
-                index=idx,
-                url=getattr(a, "url", ""),
-                title=getattr(a, "title", ""),
-                content=getattr(a, "content", ""),
-                content_length=int(getattr(a, "content_length", 0) or 0),
-                word_count=int(getattr(a, "word_count", 0) or 0),
-            )
-        )
-    return arts
-
-
 def process_articles(articles: List[ProcArticle], conf: Dict[str, Any]) -> Dict[str, Any]:
-    """Run the two-step processing with code-defined defaults (no UI overrides)."""
-    target_lang = "Chinese"
-    merge_short_i: Optional[int] = 80
+    """执行两步处理流程（清洗和翻译）。"""
     return process_articles_two_steps_concurrent(
-        articles, target_lang=target_lang, merge_short_chars=merge_short_i
+        articles, target_lang="Chinese", merge_short_chars=80
     )
