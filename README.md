@@ -4,8 +4,6 @@
 
 ![python](https://img.shields.io/badge/python-3.11%2B-blue.svg) ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
-English summary: Fetch English news, clean and translate to Chinese with free models, then export nicely formatted DOCX via a Rich TUI.
-
 ## 项目概览
 
 - 一键端到端：Rich TUI 提供抓取 → 处理 → 导出全流程。
